@@ -1,0 +1,97 @@
+"""The LangGraph state machine for Site Doctor.
+
+Week 1 goal: get crawl_node -> audit_node working end to end.
+Everything past that (triage/fix/approve/apply/reaudit) is stubbed
+so you can see the intended shape and fill it in incrementally.
+"""
+
+from langgraph.graph import StateGraph, END
+
+from models.schemas import SiteDoctorState
+from crawler.crawl import crawl_page
+from audit.lighthouse import audit_url
+
+
+# ---- Nodes ----
+
+def crawl_node(state: SiteDoctorState) -> dict:
+    local_path = crawl_page(state.url)
+    return {"local_copy_path": local_path}
+
+
+def audit_node(state: SiteDoctorState) -> dict:
+    # v1: audit the live URL directly. Once fixes exist, point this at
+    # a local static server serving local_copy_path instead.
+    result = audit_url(state.url)
+    return {"audit_before": result}
+
+
+def triage_node(state: SiteDoctorState) -> dict:
+    """TODO (Week 2): call Claude to rank state.audit_before.issues by
+    severity and fix_confidence, and fill in plain_language_summary
+    for each. For now, this is a passthrough."""
+    return {}
+
+
+def fix_node(state: SiteDoctorState) -> dict:
+    """TODO (Week 3-4): for each issue above a confidence threshold,
+    call Claude to generate a Fix (before/after snippet) and append
+    to state.fixes."""
+    return {}
+
+
+def approve_node(state: SiteDoctorState) -> dict:
+    """TODO (Week 5): surface state.fixes to the user (via the
+    Streamlit UI) and wait for approval on each. This is a natural
+    LangGraph `interrupt` point for human-in-the-loop."""
+    return {}
+
+
+def apply_node(state: SiteDoctorState) -> dict:
+    """TODO (Week 5): write approved fixes into the local HTML copy."""
+    return {}
+
+
+def reaudit_node(state: SiteDoctorState) -> dict:
+    """TODO (Week 6): re-run the audit against the patched local copy,
+    compare against audit_before, mark each Fix.verified_cleared."""
+    return {}
+
+
+def should_retry(state: SiteDoctorState) -> str:
+    """TODO (Week 6): route back to fix_node if a fix didn't clear and
+    attempts < max_retries_per_fix, otherwise END."""
+    return END
+
+
+# ---- Graph assembly ----
+
+def build_graph():
+    graph = StateGraph(SiteDoctorState)
+
+    graph.add_node("crawl", crawl_node)
+    graph.add_node("audit", audit_node)
+    graph.add_node("triage", triage_node)
+    graph.add_node("fix", fix_node)
+    graph.add_node("approve", approve_node)
+    graph.add_node("apply", apply_node)
+    graph.add_node("reaudit", reaudit_node)
+
+    graph.set_entry_point("crawl")
+    graph.add_edge("crawl", "audit")
+    graph.add_edge("audit", "triage")
+    graph.add_edge("triage", "fix")
+    graph.add_edge("fix", "approve")
+    graph.add_edge("approve", "apply")
+    graph.add_edge("apply", "reaudit")
+    graph.add_conditional_edges("reaudit", should_retry, {"fix": "fix", END: END})
+
+    return graph.compile()
+
+
+if __name__ == "__main__":
+    import sys
+    app = build_graph()
+    target = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
+    final_state = app.invoke(SiteDoctorState(url=target))
+    print(final_state)
