@@ -36,6 +36,15 @@ class Issue(BaseModel):
     )
 
 
+class UXSuggestion(BaseModel):
+    """A human judgment about the page's usability or conversion quality."""
+    id: str = Field(..., description="Stable ID for the suggestion")
+    category: str = Field(..., description="UX theme, e.g. clutter or cta-overload")
+    severity: Severity
+    observation: str = Field(..., description="What the model observed on the page")
+    recommendation: str = Field(..., description="What should change")
+
+
 class Fix(BaseModel):
     """A proposed concrete patch for a given issue."""
     issue_id: str
@@ -60,5 +69,6 @@ class SiteDoctorState(BaseModel):
     local_copy_path: Optional[str] = None
     audit_before: Optional[AuditResult] = None
     audit_after: Optional[AuditResult] = None
+    ux_suggestions: list[UXSuggestion] = Field(default_factory=list)
     fixes: list[Fix] = Field(default_factory=list)
     max_retries_per_fix: int = 2

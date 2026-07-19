@@ -8,8 +8,9 @@ so you can see the intended shape and fill it in incrementally.
 from langgraph.graph import StateGraph, END
 
 from models.schemas import SiteDoctorState
-from crawler.crawl import crawl_page
+from crawler.crawl import crawl_page, screenshot_page
 from audit.lighthouse import audit_url
+from ux_review.vision_review import review_screenshots
 
 
 # ---- Nodes ----
@@ -19,17 +20,24 @@ def crawl_node(state: SiteDoctorState) -> dict:
     return {"local_copy_path": local_path}
 
 
-def audit_node(state: SiteDoctorState) -> dict:
+def seo_audit_node(state: SiteDoctorState) -> dict:
     # v1: audit the live URL directly. Once fixes exist, point this at
     # a local static server serving local_copy_path instead.
     result = audit_url(state.url)
     return {"audit_before": result}
 
 
+def ux_review_node(state: SiteDoctorState) -> dict:
+    screenshot_paths = screenshot_page(state.url)
+    suggestions = review_screenshots(screenshot_paths)
+    return {"ux_suggestions": suggestions}
+
+
 def triage_node(state: SiteDoctorState) -> dict:
     """TODO (Week 2): call Claude to rank state.audit_before.issues by
     severity and fix_confidence, and fill in plain_language_summary
-    for each. For now, this is a passthrough."""
+    for each. UX suggestions already carry their own recommendation, so
+    they pass through unchanged for v1."""
     return {}
 
 
@@ -70,7 +78,8 @@ def build_graph():
     graph = StateGraph(SiteDoctorState)
 
     graph.add_node("crawl", crawl_node)
-    graph.add_node("audit", audit_node)
+    graph.add_node("seo_audit", seo_audit_node)
+    graph.add_node("ux_review", ux_review_node)
     graph.add_node("triage", triage_node)
     graph.add_node("fix", fix_node)
     graph.add_node("approve", approve_node)
@@ -78,8 +87,10 @@ def build_graph():
     graph.add_node("reaudit", reaudit_node)
 
     graph.set_entry_point("crawl")
-    graph.add_edge("crawl", "audit")
-    graph.add_edge("audit", "triage")
+    graph.add_edge("crawl", "seo_audit")
+    graph.add_edge("crawl", "ux_review")
+    graph.add_edge("seo_audit", "triage")
+    graph.add_edge("ux_review", "triage")
     graph.add_edge("triage", "fix")
     graph.add_edge("fix", "approve")
     graph.add_edge("approve", "apply")
@@ -91,7 +102,30 @@ def build_graph():
 
 if __name__ == "__main__":
     import sys
+
+    def render_report(state: SiteDoctorState) -> str:
+        lines = []
+        lines.append("Issues Found")
+        if state.audit_before and state.audit_before.issues:
+            for issue in state.audit_before.issues:
+                summary = issue.plain_language_summary or issue.description
+                lines.append(f"- [{issue.severity.value if issue.severity else 'unrated'}] {issue.title}: {summary}")
+        else:
+            lines.append("- None")
+
+        lines.append("")
+        lines.append("Usability & Conversion Suggestions")
+        if state.ux_suggestions:
+            for suggestion in state.ux_suggestions:
+                lines.append(
+                    f"- [{suggestion.severity.value}] {suggestion.category}: {suggestion.observation} {suggestion.recommendation}"
+                )
+        else:
+            lines.append("- None")
+
+        return "\n".join(lines)
+
     app = build_graph()
     target = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
-    final_state = app.invoke(SiteDoctorState(url=target))
-    print(final_state)
+    final_state = SiteDoctorState.model_validate(app.invoke(SiteDoctorState(url=target)))
+    print(render_report(final_state))

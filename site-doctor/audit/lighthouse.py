@@ -74,6 +74,6 @@ def audit_url(url: str) -> AuditResult:
 
 if __name__ == "__main__":
     import sys
-    target = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
+    target = input("Enter the URL to audit: ").strip()
     result = audit_url(target)
     print(result.model_dump_json(indent=2))
