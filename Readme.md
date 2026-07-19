@@ -1,4 +1,4 @@
-# 🩺 Site Doctor
+# Site Doctor
 
 <div align="center">
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 📖 Overview
+## Overview
 
 **Site Doctor** is an AI-powered website auditing and repair system that automatically crawls websites, detects SEO, accessibility, and performance issues, generates intelligent fixes, verifies those fixes using Lighthouse, and produces measurable before-and-after improvements.
 
@@ -27,7 +27,7 @@ Unlike traditional website auditing tools that only report problems, Site Doctor
 
 ---
 
-# 🚀 Why Site Doctor?
+#  Why Site Doctor?
 
 Website optimization often requires hiring SEO agencies or manually inspecting Lighthouse reports.
 
@@ -35,17 +35,17 @@ Site Doctor automates that workflow.
 
 Instead of telling you:
 
-> ❌ "Your website has 27 issues."
+>  "Your website has 27 issues."
 
 It tells you:
 
-> ✅ "I found 27 issues, generated fixes, verified them, and improved your Lighthouse score."
+>  "I found 27 issues, generated fixes, verified them, and improved your Lighthouse score."
 
 ---
 
-# 🎯 Use Cases
+#  Use Cases
 
-## 👨‍💼 Business Owners
+##  Business Owners
 
 - Improve SEO without hiring an external agency
 - Detect accessibility issues automatically
@@ -55,7 +55,7 @@ It tells you:
 
 ---
 
-## 👨‍💻 Development Teams
+##  Development Teams
 
 - Test websites before deployment
 - Integrate into CI/CD pipelines
@@ -65,7 +65,7 @@ It tells you:
 
 ---
 
-## 🎓 Students & Researchers
+##  Students & Researchers
 
 - Learn Agentic AI workflows
 - Explore LangGraph orchestration
@@ -74,7 +74,7 @@ It tells you:
 
 ---
 
-# 🧠 How It Works
+#  How It Works
 
 ```
 Website URL
@@ -112,11 +112,11 @@ Website URL
 
 ---
 
-# 🤖 Agent Architecture
+#  Agent Architecture
 
 Site Doctor consists of several specialized AI agents working together.
 
-## 🌐 Crawl Agent
+##  Crawl Agent
 
 **Responsibilities**
 
@@ -128,7 +128,7 @@ Site Doctor consists of several specialized AI agents working together.
 
 ---
 
-## 📊 Audit Agent
+##  Audit Agent
 
 Uses **Google Lighthouse** to inspect
 
@@ -140,7 +140,7 @@ Returns structured issue reports.
 
 ---
 
-## 🧠 Triage Agent (GPT)
+##  Triage Agent (GPT)
 
 Responsible for
 
@@ -151,7 +151,7 @@ Responsible for
 
 ---
 
-## 🛠 Fix Agent (GPT)
+##  Fix Agent (GPT)
 
 Responsible for generating fixes for issues such as
 
@@ -165,7 +165,7 @@ Responsible for generating fixes for issues such as
 
 ---
 
-## 👤 Human Review Agent
+##  Human Review Agent
 
 Before modifying anything,
 
@@ -184,7 +184,7 @@ every proposed fix.
 
 ---
 
-## 🔍 Verification Agent
+##  Verification Agent
 
 Re-runs Lighthouse after every applied fix.
 
@@ -215,7 +215,7 @@ This ensures fixes are **measurable**, not merely generated.
 
 ---
 
-# 📂 Project Workflow
+#  Project Workflow
 
 ```
 URL
@@ -250,7 +250,7 @@ Final Report
 
 ---
 
-# ✨ Planned Features
+#  Planned Features
 
 - Website crawling
 - AI issue explanation
@@ -268,7 +268,7 @@ Final Report
 
 ---
 
-# 📈 Expected Output
+# Expected Output
 
 ```
 SEO Score
@@ -307,7 +307,7 @@ Manual Fix Required:
 
 ---
 
-# 💡 What Makes Site Doctor Different?
+#  What Makes Site Doctor Different?
 
 Most AI website tools stop after identifying problems.
 
@@ -325,7 +325,7 @@ The goal is not just to generate code—but to produce **verified, measurable im
 
 ---
 
-# 📅 Current Status
+# Current Status
 
 🚧 Under Active Development
 
@@ -342,14 +342,8 @@ Current milestone:
 
 ---
 
-# 🤝 Contributing
+# Contributing
 
 Contributions, suggestions, and feature requests are always welcome.
 
 If you'd like to improve Site Doctor, feel free to fork the repository and submit a pull request.
-
----
-
-# 📜 License
-
-This project is licensed under the MIT License.
