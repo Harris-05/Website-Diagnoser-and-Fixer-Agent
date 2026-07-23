@@ -139,6 +139,8 @@ Uses **Google Lighthouse** to inspect
 Returns structured issue reports.
 
 ---
+## Security
+
 
 ##  Triage Agent (GPT)
 

@@ -65,8 +65,10 @@ class AuditResult(BaseModel):
 
 class SiteDoctorState(BaseModel):
     """The full LangGraph state passed between nodes."""
+    selected_checks: list[str] = Field(default_factory=lambda: ["seo", "ux"])
     url: str
     local_copy_path: Optional[str] = None
+    screenshot_paths: list[str] = Field(default_factory=list)
     audit_before: Optional[AuditResult] = None
     audit_after: Optional[AuditResult] = None
     ux_suggestions: list[UXSuggestion] = Field(default_factory=list)

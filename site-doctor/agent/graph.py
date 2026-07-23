@@ -15,22 +15,66 @@ from ux_review.vision_review import review_screenshots
 
 # ---- Nodes ----
 
+def _parse_selected_checks(raw_answer: str) -> list[str]:
+    if not raw_answer.strip():
+        return ["seo", "ux"]
+
+    normalized = raw_answer.lower().replace(",", " ")
+    tokens = normalized.split()
+
+    if "all" in tokens:
+        return ["seo", "ux", "security"]
+
+    selected_checks = []
+    for check in ("seo", "ux", "security"):
+        if check in tokens:
+            selected_checks.append(check)
+
+    return selected_checks or ["seo", "ux"]
+
+
+def check_selection_node(state: SiteDoctorState) -> dict:
+    """Prompt for which checks to run before the crawl starts."""
+    raw_answer = input("Which checks to run? [seo, ux, security] default: seo ux: ")
+    selected_checks = _parse_selected_checks(raw_answer)
+    print(f"selected_checks={selected_checks}")
+    return {"selected_checks": selected_checks}
+
 def crawl_node(state: SiteDoctorState) -> dict:
+    print("node: crawl")
     local_path = crawl_page(state.url)
-    return {"local_copy_path": local_path}
+    if "ux" in state.selected_checks:
+        screenshot_paths = screenshot_page(state.url)
+    else:
+        screenshot_paths = []
+    return {"local_copy_path": local_path, "screenshot_paths": screenshot_paths}
 
 
 def seo_audit_node(state: SiteDoctorState) -> dict:
     # v1: audit the live URL directly. Once fixes exist, point this at
     # a local static server serving local_copy_path instead.
+    print("node: seo_audit")
     result = audit_url(state.url)
     return {"audit_before": result}
 
 
 def ux_review_node(state: SiteDoctorState) -> dict:
-    screenshot_paths = screenshot_page(state.url)
+    print("node: ux_review")
+    screenshot_paths = state.screenshot_paths or screenshot_page(state.url)
     suggestions = review_screenshots(screenshot_paths)
     return {"ux_suggestions": suggestions}
+
+
+def security_audit_node(state: SiteDoctorState) -> dict:
+    """TODO: passive security checks (headers, TLS, exposed version/CVE
+    lookups). Only runs if explicitly opted into via selected_checks."""
+    print("node: security_audit")
+    return {}
+
+
+def route_checks(state: SiteDoctorState) -> list[str]:
+    mapping = {"seo": "seo_audit", "ux": "ux_review", "security": "security_audit"}
+    return [mapping[check] for check in state.selected_checks if check in mapping]
 
 
 def triage_node(state: SiteDoctorState) -> dict:
@@ -38,6 +82,7 @@ def triage_node(state: SiteDoctorState) -> dict:
     severity and fix_confidence, and fill in plain_language_summary
     for each. UX suggestions already carry their own recommendation, so
     they pass through unchanged for v1."""
+    print("node: triage")
     return {}
 
 
@@ -77,20 +122,23 @@ def should_retry(state: SiteDoctorState) -> str:
 def build_graph():
     graph = StateGraph(SiteDoctorState)
 
+    graph.add_node("check_selection", check_selection_node)
     graph.add_node("crawl", crawl_node)
     graph.add_node("seo_audit", seo_audit_node)
     graph.add_node("ux_review", ux_review_node)
+    graph.add_node("security_audit", security_audit_node)
     graph.add_node("triage", triage_node)
     graph.add_node("fix", fix_node)
     graph.add_node("approve", approve_node)
     graph.add_node("apply", apply_node)
     graph.add_node("reaudit", reaudit_node)
 
-    graph.set_entry_point("crawl")
-    graph.add_edge("crawl", "seo_audit")
-    graph.add_edge("crawl", "ux_review")
+    graph.set_entry_point("check_selection")
+    graph.add_edge("check_selection", "crawl")
+    graph.add_conditional_edges("crawl", route_checks, ["seo_audit", "ux_review", "security_audit"])
     graph.add_edge("seo_audit", "triage")
     graph.add_edge("ux_review", "triage")
+    graph.add_edge("security_audit", "triage")
     graph.add_edge("triage", "fix")
     graph.add_edge("fix", "approve")
     graph.add_edge("approve", "apply")

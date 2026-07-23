@@ -6,6 +6,7 @@ Requires: npm install -g lighthouse
 
 import json
 import subprocess
+from shutil import which
 from pathlib import Path
 
 from models.schemas import AuditResult, Category, Issue
@@ -29,9 +30,23 @@ def run_lighthouse(url: str) -> dict:
     report_path = Path("./.site-doctor-cache/lighthouse-report.json")
     report_path.parent.mkdir(exist_ok=True)
 
+    lighthouse_cmd = which("lighthouse") or which("lighthouse.cmd")
+    if lighthouse_cmd is None:
+        npx_cmd = which("npx") or which("npx.cmd")
+    else:
+        npx_cmd = None
+
+    if lighthouse_cmd is None and npx_cmd is None:
+        raise RuntimeError(
+            "Could not find the Lighthouse CLI on PATH. Install it with `npm install -g lighthouse` "
+            "or run the tool through `npx --yes lighthouse ...`."
+        )
+
+    command = [lighthouse_cmd] if lighthouse_cmd is not None else [npx_cmd, "--yes", "lighthouse"]
+
     subprocess.run(
         [
-            "lighthouse",
+            *command,
             url,
             "--output=json",
             f"--output-path={report_path}",
@@ -41,7 +56,7 @@ def run_lighthouse(url: str) -> dict:
         check=True,
     )
 
-    return json.loads(report_path.read_text())
+    return json.loads(report_path.read_text(encoding="utf-8"))
 
 
 def parse_report(raw: dict, url: str) -> AuditResult:
