@@ -4,6 +4,8 @@ that Lighthouse (and later, our fix-writer) can operate on."""
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
+from models.schemas import CrawlResult
+
 OUTPUT_DIR = Path("./.site-doctor-cache")
 
 
@@ -14,7 +16,7 @@ def crawl_page(url: str) -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.goto(url, wait_until="networkidle")
+        page.goto(url, wait_until="load", timeout=30000)
         html = page.content()
         browser.close()
 
@@ -39,7 +41,7 @@ def screenshot_page(url: str, max_screenshots: int = 4) -> list[str]:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.goto(url, wait_until="networkidle")
+        page.goto(url, wait_until="load", timeout=30000)
 
         viewport_height = page.viewport_size["height"]
         page_height = page.evaluate("document.body.scrollHeight")
@@ -62,9 +64,17 @@ def screenshot_page(url: str, max_screenshots: int = 4) -> list[str]:
     return screenshot_paths
 
 
+def crawl_site(start_url: str, max_pages: int = 10, max_depth: int = 2) -> CrawlResult:
+    """Multi-page crawl entry point. Delegates to WebsiteCrawler's BFS
+    traversal; crawl_page/screenshot_page above are kept as-is for any
+    code still using the single-page path directly."""
+    from crawler.website_crawler import WebsiteCrawler
+
+    crawler = WebsiteCrawler(max_pages=max_pages, max_depth=max_depth)
+    return crawler.crawl(start_url)
+
+
 if __name__ == "__main__":
     target = input("Enter the URL to crawl: ").strip()
-    path = crawl_page(target)
-    ss_paths = screenshot_page(target)
-    print(f"Saved {len(ss_paths)} screenshots: {ss_paths}")
-    print(f"Saved local copy: {path}")
+    result = crawl_site(target)
+    print(result.model_dump_json(indent=2))

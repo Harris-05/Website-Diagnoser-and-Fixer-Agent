@@ -1,102 +1,274 @@
 """The LangGraph state machine for Site Doctor.
 
-Week 1 goal: get crawl_node -> audit_node working end to end.
-Everything past that (triage/fix/approve/apply/reaudit) is stubbed
-so you can see the intended shape and fill it in incrementally.
+Shape:
+
+  check_selection (human-in-the-loop: which checks to run)
+        |
+      crawl
+        |
+  conditional fan-out based on selected_checks
+        |
+   +----+----+---------------+
+   v         v               v
+seo_audit  ux_review   security_audit   <- only selected branches run
+   |         |               |
+   +----+----+---------------+
+        |
+      triage
+        |
+       fix -> approve -> apply -> reaudit -+-> END
+                          ^________________|
+                    (loop back if a fix didn't clear)
 """
+
+import socket
+import ssl
+import urllib.request
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from langgraph.graph import StateGraph, END
 
-from models.schemas import SiteDoctorState
-from crawler.crawl import crawl_page, screenshot_page
+from models.schemas import SiteDoctorState, Issue, Category, Severity
+from crawler.crawl import crawl_site
 from audit.lighthouse import audit_url
 from ux_review.vision_review import review_screenshots
 
 
 # ---- Nodes ----
 
-def _parse_selected_checks(raw_answer: str) -> list[str]:
-    if not raw_answer.strip():
-        return ["seo", "ux"]
-
-    normalized = raw_answer.lower().replace(",", " ")
-    tokens = normalized.split()
-
-    if "all" in tokens:
-        return ["seo", "ux", "security"]
-
-    selected_checks = []
-    for check in ("seo", "ux", "security"):
-        if check in tokens:
-            selected_checks.append(check)
-
-    return selected_checks or ["seo", "ux"]
-
-
 def check_selection_node(state: SiteDoctorState) -> dict:
-    """Prompt for which checks to run before the crawl starts."""
-    raw_answer = input("Which checks to run? [seo, ux, security] default: seo ux: ")
-    selected_checks = _parse_selected_checks(raw_answer)
-    print(f"selected_checks={selected_checks}")
-    return {"selected_checks": selected_checks}
+    """Human-in-the-loop entry point: ask which checks to run before any
+    crawling begins. Security defaults to OFF and requires both explicit
+    selection AND an authorization confirmation (SRS FR-03, FR-04, FR-14)."""
+    print("\nWhich checks do you want to run?")
+    print("  [1] SEO       (Lighthouse: SEO / accessibility / performance)")
+    print("  [2] UX        (vision-based usability review)")
+    print("  [3] Security  (passive checks only -- OFF by default)")
+    raw = input("Enter numbers separated by commas (default: 1,2): ").strip()
+
+    selected_numbers = {n.strip() for n in raw.split(",") if n.strip()} if raw else {"1", "2"}
+    mapping = {"1": "seo", "2": "ux", "3": "security"}
+    selected = [mapping[n] for n in selected_numbers if n in mapping]
+
+    if "security" in selected:
+        confirm = input(
+            "\nYou selected Security. This runs PASSIVE checks only "
+            "(HTTP security headers, TLS certificate validity) -- no "
+            "active scanning, exploitation, or load testing is ever "
+            "performed. Confirm you are authorized to test this target "
+            "[y/N]: "
+        ).strip().lower()
+        if confirm != "y":
+            print("Not confirmed -- removing Security from this run.")
+            selected.remove("security")
+
+    if not selected:
+        print("No valid checks selected -- defaulting to SEO + UX.")
+        selected = ["seo", "ux"]
+
+    print(f"Running: {', '.join(selected)}\n")
+    return {"selected_checks": selected}
+
 
 def crawl_node(state: SiteDoctorState) -> dict:
-    print("node: crawl")
-    local_path = crawl_page(state.url)
-    if "ux" in state.selected_checks:
-        screenshot_paths = screenshot_page(state.url)
-    else:
-        screenshot_paths = []
-    return {"local_copy_path": local_path, "screenshot_paths": screenshot_paths}
+    """Runs the multi-page BFS crawl and stores the full CrawlResult.
+
+    Also mirrors the home page's HTML path and screenshots into the old
+    local_copy_path / screenshot_paths fields, since seo_audit_node and
+    ux_review_node haven't been migrated to read from crawl_result yet --
+    this keeps the rest of the graph working unchanged while that
+    migration happens incrementally.
+    """
+    print("Entering: Crawl Node")
+    max_pag=int(input("Enter the maximum number of pages to crawl (default 10): ").strip() or 10)
+    max_dep=int(input("Enter the maximum depth to crawl (default 3): ").strip() or 3)
+    result = crawl_site(state.url, max_pages=max_pag, max_depth=max_dep)
+
+    home_page = result.pages[0] if result.pages else None
+    local_path = home_page.html_path if home_page else None
+    screenshot_paths = home_page.screenshot_paths if home_page else []
+
+    return {
+        "crawl_result": result,
+        "local_copy_path": local_path,
+        "screenshot_paths": screenshot_paths,
+    }
+
+
+def route_checks(state: SiteDoctorState) -> list[str]:
+    """Conditional fan-out: only invoke the audit branches the user
+    actually selected at check_selection_node."""
+    mapping = {"seo": "seo_audit", "ux": "ux_review", "security": "security_audit"}
+    return [mapping[check] for check in state.selected_checks if check in mapping]
 
 
 def seo_audit_node(state: SiteDoctorState) -> dict:
-    # v1: audit the live URL directly. Once fixes exist, point this at
-    # a local static server serving local_copy_path instead.
-    print("node: seo_audit")
+    """Mechanical, rule-based checks via Lighthouse. Ground-truth verifiable —
+    these issues go through the fix/verify/retry loop later."""
+    print("Entering: SEO Audit Node")
     result = audit_url(state.url)
     return {"audit_before": result}
 
 
 def ux_review_node(state: SiteDoctorState) -> dict:
-    print("node: ux_review")
-    screenshot_paths = state.screenshot_paths or screenshot_page(state.url)
-    suggestions = review_screenshots(screenshot_paths)
+    """Vision-based judgment call on usability/conversion. No ground truth to
+    re-verify mechanically — surfaced to the human, not auto-fixed."""
+    print("Entering: UX Review Node")
+    suggestions = review_screenshots(state.screenshot_paths)
     return {"ux_suggestions": suggestions}
 
 
+_REQUIRED_SECURITY_HEADERS = {
+    "strict-transport-security": (
+        "Missing HSTS header (Strict-Transport-Security) -- allows "
+        "connections to be downgraded to plain HTTP."
+    ),
+    "content-security-policy": (
+        "Missing Content-Security-Policy header -- reduces protection "
+        "against cross-site scripting and injection attacks."
+    ),
+    "x-content-type-options": (
+        "Missing X-Content-Type-Options header -- browsers may MIME-sniff "
+        "responses in unexpected ways."
+    ),
+    "x-frame-options": (
+        "Missing X-Frame-Options header -- the page can potentially be "
+        "embedded in a clickjacking iframe."
+    ),
+    "referrer-policy": (
+        "Missing Referrer-Policy header -- full page URLs may leak to "
+        "third parties via the Referer header."
+    ),
+}
+
+
 def security_audit_node(state: SiteDoctorState) -> dict:
-    """TODO: passive security checks (headers, TLS, exposed version/CVE
-    lookups). Only runs if explicitly opted into via selected_checks."""
-    print("node: security_audit")
-    return {}
+    """Passive security posture checks ONLY: HTTP security headers and TLS
+    certificate validity. No active scanning, no exploitation attempts, no
+    load/stress testing under any configuration (SRS FR-15, FR-16). Only
+    reachable when explicitly selected via check_selection_node."""
+    print("Entering: Security Audit Node")
+    parsed = urlparse(state.url)
+    hostname = parsed.hostname
+    findings: list[Issue] = []
 
+    # --- HTTP security headers (passive: a single normal GET request) ---
+    try:
+        req = urllib.request.Request(
+            state.url, method="GET", headers={"User-Agent": "SiteDoctor/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            headers = {k.lower(): v for k, v in resp.getheaders()}
+    except Exception as exc:
+        headers = {}
+        findings.append(
+            Issue(
+                id="security-fetch-failed",
+                category=Category.SECURITY,
+                title="Could not fetch page to inspect security headers",
+                description=str(exc),
+                severity=Severity.LOW,
+            )
+        )
 
-def route_checks(state: SiteDoctorState) -> list[str]:
-    mapping = {"seo": "seo_audit", "ux": "ux_review", "security": "security_audit"}
-    return [mapping[check] for check in state.selected_checks if check in mapping]
+    for header, description in _REQUIRED_SECURITY_HEADERS.items():
+        if header not in headers:
+            findings.append(
+                Issue(
+                    id=f"security-missing-{header}",
+                    category=Category.SECURITY,
+                    title=f"Missing {header} header",
+                    description=description,
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    # --- TLS certificate validity (passive: standard TLS handshake) ---
+    if parsed.scheme == "https" and hostname:
+        try:
+            ctx = ssl.create_default_context()
+            with socket.create_connection((hostname, 443), timeout=10) as sock:
+                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+
+            expires = datetime.strptime(
+                cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
+            ).replace(tzinfo=timezone.utc)
+            days_left = (expires - datetime.now(timezone.utc)).days
+
+            if days_left < 14:
+                findings.append(
+                    Issue(
+                        id="security-cert-expiring",
+                        category=Category.SECURITY,
+                        title="TLS certificate expiring soon",
+                        description=(
+                            f"Certificate expires in {days_left} days "
+                            f"({expires.date()})."
+                        ),
+                        severity=Severity.HIGH if days_left < 3 else Severity.MEDIUM,
+                    )
+                )
+        except ssl.SSLCertVerificationError as exc:
+            findings.append(
+                Issue(
+                    id="security-cert-invalid",
+                    category=Category.SECURITY,
+                    title="TLS certificate failed verification",
+                    description=str(exc),
+                    severity=Severity.HIGH,
+                )
+            )
+        except Exception as exc:
+            findings.append(
+                Issue(
+                    id="security-tls-check-failed",
+                    category=Category.SECURITY,
+                    title="Could not verify TLS configuration",
+                    description=str(exc),
+                    severity=Severity.LOW,
+                )
+            )
+    elif parsed.scheme != "https":
+        findings.append(
+            Issue(
+                id="security-no-https",
+                category=Category.SECURITY,
+                title="Site is not served over HTTPS",
+                description="All traffic, including any submitted forms, is unencrypted.",
+                severity=Severity.HIGH,
+            )
+        )
+
+    return {"security_findings": findings}
 
 
 def triage_node(state: SiteDoctorState) -> dict:
-    """TODO (Week 2): call Claude to rank state.audit_before.issues by
-    severity and fix_confidence, and fill in plain_language_summary
-    for each. UX suggestions already carry their own recommendation, so
-    they pass through unchanged for v1."""
-    print("node: triage")
+    """Ranks and plain-language-ifies the mechanical Issues. UX suggestions
+    already come out of the vision model in a fairly final, human-readable
+    form, so they pass through untouched for v1."""
+    if not state.audit_before or not state.audit_before.issues:
+        return {}
+
+    # TODO: your triage implementation goes here — ranks
+    # state.audit_before.issues by severity and fills in
+    # plain_language_summary for each via an OpenAI call.
+    print("Entering: Triage Node")
     return {}
 
 
 def fix_node(state: SiteDoctorState) -> dict:
-    """TODO (Week 3-4): for each issue above a confidence threshold,
-    call Claude to generate a Fix (before/after snippet) and append
-    to state.fixes."""
+    """TODO (Week 3-4): for each Issue above a confidence threshold, call
+    OpenAI to generate a Fix and append to state.fixes. UXSuggestions and
+    security_findings are NOT run through this node — no mechanical
+    fix/verify loop applies to judgment calls or infra-level findings."""
+    print("Entering: Fix Node")
     return {}
 
 
 def approve_node(state: SiteDoctorState) -> dict:
-    """TODO (Week 5): surface state.fixes to the user (via the
-    Streamlit UI) and wait for approval on each. This is a natural
-    LangGraph `interrupt` point for human-in-the-loop."""
+    """TODO (Week 5): surface state.fixes to the user and wait for approval."""
     return {}
 
 
@@ -106,7 +278,7 @@ def apply_node(state: SiteDoctorState) -> dict:
 
 
 def reaudit_node(state: SiteDoctorState) -> dict:
-    """TODO (Week 6): re-run the audit against the patched local copy,
+    """TODO (Week 6): re-run Lighthouse against the patched local copy,
     compare against audit_before, mark each Fix.verified_cleared."""
     return {}
 
@@ -135,10 +307,17 @@ def build_graph():
 
     graph.set_entry_point("check_selection")
     graph.add_edge("check_selection", "crawl")
-    graph.add_conditional_edges("crawl", route_checks, ["seo_audit", "ux_review", "security_audit"])
+
+    # conditional fan-out: only the branches the user selected actually run
+    graph.add_conditional_edges(
+        "crawl", route_checks, ["seo_audit", "ux_review", "security_audit"]
+    )
+
+    # fan-in: triage waits for every branch that WAS invoked
     graph.add_edge("seo_audit", "triage")
     graph.add_edge("ux_review", "triage")
     graph.add_edge("security_audit", "triage")
+
     graph.add_edge("triage", "fix")
     graph.add_edge("fix", "approve")
     graph.add_edge("approve", "apply")
@@ -149,31 +328,7 @@ def build_graph():
 
 
 if __name__ == "__main__":
-    import sys
-
-    def render_report(state: SiteDoctorState) -> str:
-        lines = []
-        lines.append("Issues Found")
-        if state.audit_before and state.audit_before.issues:
-            for issue in state.audit_before.issues:
-                summary = issue.plain_language_summary or issue.description
-                lines.append(f"- [{issue.severity.value if issue.severity else 'unrated'}] {issue.title}: {summary}")
-        else:
-            lines.append("- None")
-
-        lines.append("")
-        lines.append("Usability & Conversion Suggestions")
-        if state.ux_suggestions:
-            for suggestion in state.ux_suggestions:
-                lines.append(
-                    f"- [{suggestion.severity.value}] {suggestion.category}: {suggestion.observation} {suggestion.recommendation}"
-                )
-        else:
-            lines.append("- None")
-
-        return "\n".join(lines)
-
     app = build_graph()
-    target = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
-    final_state = SiteDoctorState.model_validate(app.invoke(SiteDoctorState(url=target)))
-    print(render_report(final_state))
+    target = input("Enter the URL to review: ").strip()
+    final_state = app.invoke(SiteDoctorState(url=target))
+    print(final_state)
