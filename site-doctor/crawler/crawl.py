@@ -64,14 +64,14 @@ def screenshot_page(url: str, max_screenshots: int = 4) -> list[str]:
     return screenshot_paths
 
 
-def crawl_site(start_url: str, max_pages: int = 10, max_depth: int = 2) -> CrawlResult:
+def crawl_site(start_url: str, max_pages: int = 10, max_depth: int = 2, isux: bool = False) -> CrawlResult:
     """Multi-page crawl entry point. Delegates to WebsiteCrawler's BFS
     traversal; crawl_page/screenshot_page above are kept as-is for any
     code still using the single-page path directly."""
     from crawler.website_crawler import WebsiteCrawler
 
     crawler = WebsiteCrawler(max_pages=max_pages, max_depth=max_depth)
-    return crawler.crawl(start_url)
+    return crawler.crawl(start_url, isux=isux)
 
 
 if __name__ == "__main__":

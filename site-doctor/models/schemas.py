@@ -52,6 +52,7 @@ class UXSuggestion(BaseModel):
     severity: Severity
     observation: str = Field(..., description="What the model saw")
     recommendation: str = Field(..., description="What to change")
+    page_url: str | None = None
 
 
 class Fix(BaseModel):
@@ -98,9 +99,11 @@ class SiteDoctorState(BaseModel):
     crawl_result: Optional[CrawlResult] = None
     local_copy_path: Optional[str] = None
     screenshot_paths: list[str] = Field(default_factory=list)
-    audit_before: Optional[AuditResult] = None
-    audit_after: Optional[AuditResult] = None
+    audit_before: list[AuditResult] = Field(default_factory=list)
+    audit_after: list[AuditResult] = Field(default_factory=list)
     ux_suggestions: list[UXSuggestion] = Field(default_factory=list)
     security_findings: list[Issue] = Field(default_factory=list)
     fixes: list[Fix] = Field(default_factory=list)
     max_retries_per_fix: int = 2
+    max_depth: int = 2
+    max_pages: int = 10

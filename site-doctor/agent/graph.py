@@ -29,10 +29,10 @@ from urllib.parse import urlparse
 
 from langgraph.graph import StateGraph, END
 
-from models.schemas import SiteDoctorState, Issue, Category, Severity
+from models.schemas import SiteDoctorState, Issue, Category, Severity, UXSuggestion, AuditResult
 from crawler.crawl import crawl_site
 from audit.lighthouse import audit_url
-from ux_review.vision_review import review_screenshots
+from ux_review.vision_review import review_screenshots,save_ux_report
 
 
 # ---- Nodes ----
@@ -51,12 +51,14 @@ def check_selection_node(state: SiteDoctorState) -> dict:
     mapping = {"1": "seo", "2": "ux", "3": "security"}
     selected = [mapping[n] for n in selected_numbers if n in mapping]
 
+    max_d=int(input("Enter the max depth : ").strip() or 2)
+
+    max_p=int(input("Enter the max pages : ").strip() or 10)
+    state.max_depth=max_d
+    state.max_pages=max_p
     if "security" in selected:
         confirm = input(
-            "\nYou selected Security. This runs PASSIVE checks only "
-            "(HTTP security headers, TLS certificate validity) -- no "
-            "active scanning, exploitation, or load testing is ever "
-            "performed. Confirm you are authorized to test this target "
+            "\nYou selected Security. Confirm you are authorized to test this target "
             "[y/N]: "
         ).strip().lower()
         if confirm != "y":
@@ -80,15 +82,18 @@ def crawl_node(state: SiteDoctorState) -> dict:
     this keeps the rest of the graph working unchanged while that
     migration happens incrementally.
     """
-    print("Entering: Crawl Node")
-    max_pag=int(input("Enter the maximum number of pages to crawl (default 10): ").strip() or 10)
-    max_dep=int(input("Enter the maximum depth to crawl (default 3): ").strip() or 3)
-    result = crawl_site(state.url, max_pages=max_pag, max_depth=max_dep)
+    print("Entering Crawl Node")
+
+    if "ux" in state.selected_checks:
+        #Only take screenshots if UX review is selected
+        result = crawl_site(state.url, max_pages=state.max_pages, max_depth=state.max_depth,isux=True)
+    else:
+        result=crawl_site(state.url, max_pages=state.max_pages, max_depth=state.max_depth,isux=False)
 
     home_page = result.pages[0] if result.pages else None
     local_path = home_page.html_path if home_page else None
     screenshot_paths = home_page.screenshot_paths if home_page else []
-
+    print("Finished Crawl Node")
     return {
         "crawl_result": result,
         "local_copy_path": local_path,
@@ -100,23 +105,48 @@ def route_checks(state: SiteDoctorState) -> list[str]:
     """Conditional fan-out: only invoke the audit branches the user
     actually selected at check_selection_node."""
     mapping = {"seo": "seo_audit", "ux": "ux_review", "security": "security_audit"}
+
     return [mapping[check] for check in state.selected_checks if check in mapping]
 
 
 def seo_audit_node(state: SiteDoctorState) -> dict:
     """Mechanical, rule-based checks via Lighthouse. Ground-truth verifiable —
-    these issues go through the fix/verify/retry loop later."""
-    print("Entering: SEO Audit Node")
-    result = audit_url(state.url)
-    return {"audit_before": result}
+    these issues go through the fix/verify/retry loop later.
+
+    Audits EVERY page the crawler found, not just the start URL -- each
+    AuditResult already carries its own .url, so downstream consumers
+    (triage, report) can tell which page each issue came from without any
+    extra bookkeeping.
+    """
+    print("Entering SEO Node ")
+    pages = state.crawl_result.pages if state.crawl_result else []
+    urls_to_audit = [p.url for p in pages] if pages else [state.url]
+
+    results = []
+    for url in urls_to_audit:
+        try:
+            results.append(audit_url(url))
+        except Exception as exc:
+            print(f"SEO audit failed for {url}: {exc}")
+
+    print("Seo Audit Node")
+    return {"audit_before": results}
 
 
 def ux_review_node(state: SiteDoctorState) -> dict:
-    """Vision-based judgment call on usability/conversion. No ground truth to
-    re-verify mechanically — surfaced to the human, not auto-fixed."""
-    print("Entering: UX Review Node")
-    suggestions = review_screenshots(state.screenshot_paths)
-    return {"ux_suggestions": suggestions}
+    print("UX Review Node Entered")
+    all_suggestions: list[UXSuggestion] = []
+    for page in state.crawl_result.pages:
+        try:
+            suggestions = review_screenshots(page.url, page.screenshot_paths)
+        except Exception as e:
+            print(f"UX review failed for {page.url}: {e}")
+            suggestions = []
+        all_suggestions.extend(suggestions)
+
+    save_ux_report(state.crawl_result.crawl_id, all_suggestions)
+    print("UX Review Node Completed")
+    return {"ux_suggestions": all_suggestions}
 
 
 _REQUIRED_SECURITY_HEADERS = {
@@ -148,7 +178,7 @@ def security_audit_node(state: SiteDoctorState) -> dict:
     certificate validity. No active scanning, no exploitation attempts, no
     load/stress testing under any configuration (SRS FR-15, FR-16). Only
     reachable when explicitly selected via check_selection_node."""
-    print("Entering: Security Audit Node")
+    print("Security Audit Node Entered")
     parsed = urlparse(state.url)
     hostname = parsed.hostname
     findings: list[Issue] = []
@@ -240,7 +270,7 @@ def security_audit_node(state: SiteDoctorState) -> dict:
                 severity=Severity.HIGH,
             )
         )
-
+    print("Security Audit Node Completed")
     return {"security_findings": findings}
 
 
@@ -248,13 +278,19 @@ def triage_node(state: SiteDoctorState) -> dict:
     """Ranks and plain-language-ifies the mechanical Issues. UX suggestions
     already come out of the vision model in a fairly final, human-readable
     form, so they pass through untouched for v1."""
-    if not state.audit_before or not state.audit_before.issues:
+    if not state.audit_before:
         return {}
 
-    # TODO: your triage implementation goes here — ranks
-    # state.audit_before.issues by severity and fills in
-    # plain_language_summary for each via an OpenAI call.
-    print("Entering: Triage Node")
+    total_issues = sum(len(result.issues) for result in state.audit_before)
+    if not total_issues:
+        return {}
+
+    # TODO: your triage implementation goes here. Note audit_before is now
+    # a LIST of AuditResult (one per crawled page) -- iterate
+    # state.audit_before, and within each result.issues, ranking by
+    # severity and filling in plain_language_summary as before. Each
+    # AuditResult.url tells you which page a given issue came from, useful
+    # for the report grouping later.
     return {}
 
 
@@ -263,7 +299,6 @@ def fix_node(state: SiteDoctorState) -> dict:
     OpenAI to generate a Fix and append to state.fixes. UXSuggestions and
     security_findings are NOT run through this node — no mechanical
     fix/verify loop applies to judgment calls or infra-level findings."""
-    print("Entering: Fix Node")
     return {}
 
 

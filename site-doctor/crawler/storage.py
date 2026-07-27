@@ -42,6 +42,8 @@ def screenshot_path(crawl_id: str, slug: str, index: int) -> Path:
 def manifest_path(crawl_id: str) -> Path:
     return crawl_dir(crawl_id) / "manifest.json"
 
+def ux_report_path(crawl_id: str) -> Path:
+    return crawl_dir(crawl_id) / "ux_report.md"
 
 def save_html(crawl_id: str, slug: str, html: str) -> str:
     """Write a page's HTML to its slot in the cache. Returns the saved path."""

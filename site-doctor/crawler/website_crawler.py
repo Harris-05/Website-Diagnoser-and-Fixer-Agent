@@ -19,7 +19,7 @@ class WebsiteCrawler:
         self.max_depth = max_depth
         self.max_screenshots = max_screenshots
 
-    def crawl(self, start_url: str) -> CrawlResult:
+    def crawl(self, start_url: str, isux: bool = False) -> CrawlResult:
         crawl_id = uuid.uuid4().hex[:8]
         scheme = start_url.split("://")[0] if "://" in start_url else "https"
 
@@ -49,7 +49,9 @@ class WebsiteCrawler:
                 slug = slugify(url_key)
 
                 saved_html_path = save_html(crawl_id, slug, html)
-                saved_screenshot_paths = self._capture_screenshots(page, crawl_id, slug)
+                saved_screenshot_paths: list[str] = []
+                if isux:
+                    saved_screenshot_paths = self._capture_screenshots(page, crawl_id, slug)
 
                 pages.append(
                     PageResult(
