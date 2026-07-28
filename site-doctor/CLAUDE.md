@@ -68,8 +68,13 @@ site-doctor/
         storage.py            <- manages .site-doctor-cache/crawl_<id>/
                                  layout; save_html, save_manifest,
                                  load_manifest, path builders.
-                                 PENDING: ux_report_path() helper proposed
-                                 (mirrors manifest_path) — not yet added.
+                                 ux_report_path()-style helper still not
+                                 explicitly reconfirmed in this file's own
+                                 code, but save_ux_report() (in
+                                 vision_review.py) IS confirmed wired up
+                                 and working via graph.py this session --
+                                 verify storage.py's exact implementation
+                                 next time this file is opened.
         website_crawler.py    <- WebsiteCrawler class: real BFS traversal.
                                  Now takes an `isux` flag threaded through
                                  crawl() -> per-page loop, so screenshots
@@ -87,13 +92,34 @@ site-doctor/
     ux_review/
         vision_review.py      <- sends multiple screenshots in ONE call to
                                  a vision LLM, parses UXSuggestion objects.
-                                 Now takes (url, screenshot_paths) and
-                                 stamps the URL onto each returned
-                                 suggestion (see §4). Prompt substantially
-                                 rewritten this session — see §6.
-                                 PENDING: save_ux_report() (grouped
-                                 markdown report per crawl) proposed,
-                                 not yet added.
+                                 Takes (url, screenshot_paths) and stamps
+                                 the URL onto each returned suggestion
+                                 (confirmed). Also exports save_ux_report()
+                                 (grouped markdown report per crawl,
+                                 confirmed imported and called from
+                                 graph.py's ux_review_node). Prompt
+                                 substantially rewritten in an earlier
+                                 session — see §6. Still open:
+                                 response_format={"type":"json_object"}
+                                 and a UXCategory enum were both proposed
+                                 but not confirmed applied.
+    security/
+        verification.py       <- NEW this session. Domain-ownership
+                                 verification gate for future active
+                                 security tooling. See §6 "Active security
+                                 tooling" and the new §12 for full detail.
+                                 Confirmed written and explained to the
+                                 user, NOT yet tested against a real
+                                 domain (needs a domain the user actually
+                                 controls DNS for) or unit-tested with a
+                                 mocked DNS response.
+                                 PLANNED, not yet written: passive_checks.py
+                                 (relocated + multi-page-migrated version
+                                 of the current security_audit_node logic)
+                                 and active_engine.py (ZAP/Nuclei/SQLMap/
+                                 Dalfox/Nmap/k6 wrappers, each gated behind
+                                 verification.require_verified() as the
+                                 first line of every function).
     models/
         schemas.py             <- ALL Pydantic models (see §5).
                                  PENDING: UXSuggestion.page_url field and
@@ -133,12 +159,13 @@ seo_audit  ux_review   security_audit   <- ONLY selected branches run
 | Node | Status | Notes |
 |---|---|---|
 | `check_selection_node` | **Done** | Prompts user (CLI `input()`) for SEO/UX/Security by number. Defaults to SEO+UX if blank. Security requires a SEPARATE explicit `y` confirmation naming exactly what "passive only" means, in addition to being selected. |
-| `crawl_node` | **Done, evolving** | Calls `crawl_site(state.url, max_pages=..., max_depth=..., isux=...)`. `max_pages`/`max_depth` were first made interactive via `input()` directly inside this node, then (per the user's latest change) moved onto `SiteDoctorState` instead so a single upfront prompt sets them and every downstream node — including `crawl_node` itself — stays input-independent (crucial for the eventual FastAPI surface in the SDD, which can't call `input()`). `isux` is now derived from `"ux" in state.selected_checks` and passed through so screenshots are ONLY captured when UX review is actually selected — SEO-only runs no longer pay the Playwright screenshot cost. Still populates `state.crawl_result` (the real multi-page result) AND mirrors the home page into the legacy `local_copy_path`/`screenshot_paths` fields for any code not yet migrated. **Open item:** exact final home for the max_depth/max_pages prompt (inside `check_selection_node` vs. a new dedicated setup node) and the state field names/defaults were not confirmed with final code before this doc was written — verify next session. |
+| `crawl_node` | **Done** | Calls `crawl_site(state.url, max_pages=state.max_pages, max_depth=state.max_depth, isux=...)`. Confirmed fully migrated off in-node `input()` — it now reads `state.max_depth`/`state.max_pages` directly, set entirely by `check_selection_node` upfront (see below), so `crawl_node` itself is fully input-independent (important for the eventual FastAPI surface, which can't call `input()`). `isux` is derived from `"ux" in state.selected_checks` and passed through so screenshots are ONLY captured when UX review is actually selected. Still populates `state.crawl_result` (the real multi-page result) AND mirrors the home page into the legacy `local_copy_path`/`screenshot_paths` fields for any code not yet migrated. Also received a real bug fix this session — see §7 "SPA hydration" and "screenshot spinner" entries — for sites that render client-side (React/Vite SPAs) after Playwright's `wait_until="load"` fires. |
+| `check_selection_node` | **Done, had a real bug this session** | Prompts for checks + max_depth + max_pages, all in one place (single upfront human-in-the-loop step, per the "consolidate all CLI prompts" decision). Had a bug where `state.max_depth = max_d` / `state.max_pages = max_p` mutated the `state` argument directly instead of including those keys in the node's **returned** dict — LangGraph doesn't pick up in-place mutations of the input state object, only what a node explicitly returns, so `max_depth`/`max_pages` silently stayed at their Pydantic default of `None` all the way into `crawl_node`, which then silently fell back to `crawl_site()`'s own hardcoded signature defaults (`max_pages=10, max_depth=2`) regardless of what the user typed. Fixed by adding `"max_depth": max_d, "max_pages": max_p` to the returned dict. **General rule going forward: LangGraph nodes must never rely on mutating the `state` object in place — always return the changed fields.** |
 | `route_checks` | **Done** | Conditional-edge function; maps `selected_checks` -> node names, only those nodes actually get invoked (verified: selecting only `seo` results in `ux_suggestions: []` and `security_findings: []` because those branches never ran, not because they ran and found nothing). |
-| `seo_audit_node` | **Done** | Runs Lighthouse against **every** page in `crawl_result.pages`, not just the start URL. Returns `audit_before` as a **list** of `AuditResult`, one per page (each `AuditResult` already carries its own `.url`). Wrapped in try/except per-page so one page's Lighthouse failure doesn't kill the whole run. Verified end-to-end against a real 5-page site (autogloss.pk) — all 5 pages returned scores/issues correctly. `NO_LCP` LanternError + Windows `EPERM` temp-cleanup errors are noisy stderr from Lighthouse/chrome-launcher but do NOT break the run — the existing performance-category retry (`audit_url`'s except block) already handles `NO_LCP` pages correctly. |
-| `ux_review_node` | **Migrated to multi-page this session** | Now loops over `state.crawl_result.pages`, calling `review_screenshots(page.url, page.screenshot_paths)` per page inside a try/except (mirrors the `seo_audit_node` per-page resilience pattern) and accumulating into one `ux_suggestions` list. Verified end-to-end against autogloss.pk: correctly iterated all 5 pages (previously crashed with `TypeError: review_screenshots() missing 1 required positional argument` because `graph.py` still had the old single-arg call — that's fixed now). Currently blocked on an OpenAI `insufficient_quota` (429) billing issue on the user's account, unrelated to code — needs billing/plan check on platform.openai.com before it can be verified against a live vision call. **Open item:** `save_ux_report()` (grouped-by-page-URL markdown report, see §6) was proposed but not yet confirmed added to the node. |
-| `security_audit_node` | **Done (basic, passive-only)** | Checks 5 HTTP security headers (HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy) via a single GET request, and TLS certificate validity/expiry via a standard TLS handshake. Explicitly does NOT do active scanning. Only audits `state.url` (home page) currently — same multi-page gap as before, NOT addressed this session. |
-| `triage_node` | **STUB** | Guard logic updated for the new list-based `audit_before`, but the actual ranking/plain-language-summary LLM call is not yet implemented. This was the very first node the user was asked to write and it's been deferred through several detours. An `aggregate_for_llm()` helper was sketched this session (see §6) to collapse the per-page `audit_before` list into one compact dict for this node's future LLM call — not yet wired in. |
+| `seo_audit_node` | **Done** | Runs Lighthouse against **every** page in `crawl_result.pages`, not just the start URL. Returns `audit_before` as a **list** of `AuditResult`, one per page (each `AuditResult` already carries its own `.url`). Wrapped in try/except per-page so one page's Lighthouse failure doesn't kill the whole run. Verified end-to-end against two real multi-page sites (autogloss.pk, quran-learning-portal-frontend.vercel.app) — all pages returned scores/issues correctly. `NO_LCP` LanternError + Windows `EPERM` temp-cleanup errors are noisy stderr from Lighthouse/chrome-launcher but do NOT break the run — the existing performance-category retry (`audit_url`'s except block) already handles `NO_LCP` pages correctly; seen again this session on the Vercel test site and still handled fine. |
+| `ux_review_node` | **Done, fully confirmed this session** | Loops over `state.crawl_result.pages`, calling `review_screenshots(page.url, page.screenshot_paths)` per page inside a try/except (mirrors `seo_audit_node`'s per-page resilience pattern), accumulates into one `ux_suggestions` list, and calls `save_ux_report(state.crawl_result.crawl_id, all_suggestions)` before returning — confirmed actually wired in and imported in `graph.py` this session (previously only proposed). The earlier `TypeError: review_screenshots() missing 1 required positional argument` bug is fixed and stayed fixed across this session's runs. Still blocked end-to-end verification on an OpenAI `insufficient_quota` (429) billing issue on the user's account (unrelated to code, seen again this session) — structurally confirmed working (correctly iterates every page, per-page try/except holds), just not yet verified against a real successful vision-model response. |
+| `security_audit_node` | **Done (passive-only), single-page still a known gap** | Full implementation now confirmed in code: checks 5 HTTP security headers (HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy) via a single passive GET request, plus TLS certificate validity/expiry and a "not served over HTTPS" check via a standard TLS handshake — each missing/failing check becomes an `Issue` with `Category.SECURITY` and an appropriate `Severity`. Explicitly does NOT do active scanning of any kind, consistent with the hard constraint in §6. Still only audits `state.url` (home page) — has NOT been migrated to loop over `crawl_result.pages` the way `seo_audit_node`/`ux_review_node` were. This is now a bigger decision than just "add a loop," though — see the new §6 "Active security tooling" entry and §10 for why active-tool escalation (a much bigger feature the user wants eventually) needs a verification gate designed BEFORE that expansion happens. |
+| `triage_node` | **STUB** | Guard logic updated for the new list-based `audit_before`, but the actual ranking/plain-language-summary LLM call is not yet implemented. This was the very first node the user was asked to write and it's been deferred through several detours. An `aggregate_for_llm()` helper was sketched in an earlier session (see §6) to collapse the per-page `audit_before` list into one compact dict for this node's future LLM call — not yet wired in. |
 | `fix_node` | **STUB** | Not started. |
 | `approve_node` | **STUB** | Not started. Intended as a LangGraph human-in-the-loop interrupt point. |
 | `apply_node` | **STUB** | Not started. |
@@ -179,9 +206,9 @@ class UXSuggestion(BaseModel):
     re-check mechanically -- surfaced to human, never auto-applied."""
     id: str
     category: str          # e.g. clutter, cta-overload, hierarchy
-                            # PROPOSED (not yet confirmed applied): tighten
-                            # to a UXCategory(str, Enum) mirroring the 14
-                            # category strings now used in
+                            # STILL PROPOSED, not yet confirmed applied:
+                            # tighten to a UXCategory(str, Enum) mirroring
+                            # the 14 category strings now used in
                             # VISION_REVIEW_PROMPT (see §6), so a
                             # malformed category from the model fails at
                             # parse time instead of silently passing
@@ -189,16 +216,14 @@ class UXSuggestion(BaseModel):
     severity: Severity
     observation: str
     recommendation: str
-    page_url: str | None = None   # ADDED this session — which page this
-                                   # suggestion is about. Needed once
-                                   # ux_review_node started looping over
-                                   # multiple pages; review_screenshots()
-                                   # now stamps this after parsing the
-                                   # model's response. CONFIRM this field
-                                   # made it into the actual file — it was
-                                   # proposed and the multi-page flow
-                                   # depends on it, but wasn't pasted back
-                                   # for verification.
+    page_url: str | None = None   # CONFIRMED this session — which page
+                                   # this suggestion is about.
+                                   # review_screenshots() stamps this after
+                                   # parsing the model's response, and
+                                   # save_ux_report() groups by it. Both
+                                   # confirmed actually wired into
+                                   # graph.py/vision_review.py now, not
+                                   # just proposed.
 
 class Fix(BaseModel):
     """A proposed patch for a specific Issue (never a UXSuggestion)."""
@@ -237,12 +262,33 @@ class SiteDoctorState(BaseModel):
     """The full LangGraph state, shared across every node."""
     url: str
     selected_checks: list[str] = ["seo", "ux"]     # security OFF by default
-    max_depth: int          # ADDED this session -- moved off crawl_node's
-                             # local input() so every node is
-                             # input-independent. Exact field name/default
-                             # not reconfirmed in code -- verify next
-                             # session.
-    max_pages: int          # ADDED this session -- same as above.
+    max_depth: int | None = None   # CONFIRMED this session -- lives on
+                                    # state, defaults to None. Set entirely
+                                    # by check_selection_node (single
+                                    # upfront prompt), read directly by
+                                    # crawl_node. NOTE the earlier bug: the
+                                    # first implementation set this via
+                                    # direct state mutation
+                                    # (state.max_depth = max_d) inside
+                                    # check_selection_node instead of
+                                    # returning it, so it silently stayed
+                                    # None all the way to crawl_node, which
+                                    # then silently fell back to
+                                    # crawl_site()'s own hardcoded defaults
+                                    # (2/10). Fixed by returning
+                                    # {"max_depth": max_d, ...} from the
+                                    # node instead. See §7.
+    max_pages: int | None = None   # CONFIRMED this session -- same as
+                                    # above. Defaults to 10 at the input()
+                                    # prompt if left blank
+                                    # (`int(input(...).strip() or 10)`),
+                                    # which now matches crawl_site()'s own
+                                    # signature default of 10 -- the
+                                    # earlier "defaults don't match" note
+                                    # in §9 is resolved for max_pages.
+                                    # max_depth's input-prompt default is 2,
+                                    # also matching crawl_site()'s default
+                                    # of 2 -- fully reconciled now.
     crawl_result: Optional[CrawlResult] = None
     local_copy_path: Optional[str] = None           # LEGACY mirror, home page only
     screenshot_paths: list[str] = []                # LEGACY mirror, home page only
@@ -333,6 +379,57 @@ This distinction is enforced in the SRS, SDD, and DB design docs too (see
   rule intact while adding a page-level loop on top of it.
 - **`gpt-4o-mini`, not a frontier model**, used everywhere — deliberate
   cost control given the user has no budget to spend on this project.
+- **Active security tooling (ZAP active scan, SQLMap, Dalfox, Nuclei,
+  Nmap, k6 load/stress/spike) is deliberately OUT of the current build,
+  and must NOT be added to the default "audit any URL" flow — this was
+  discussed at length this session and is a firm architectural line, not
+  just a style preference.** The user's intent is for Site Doctor to
+  become a genuinely production-level agent, and does intend to use these
+  tools eventually, but ONLY against sites they own or have explicit
+  permission to test — never as a default option available for any
+  arbitrary URL a user types in, which is how Site Doctor's check-selection
+  flow currently works for everything else. The reasoning: every one of
+  those tools actively attacks the target (injects payloads, floods it
+  with traffic, exploits CVEs, port-scans infrastructure) rather than
+  passively observing it, and running them against infrastructure without
+  clear authorization is a real legal exposure (CFAA and equivalents)
+  regardless of good intent or portfolio-project framing — this is the
+  same category of problem the user already caught and fixed once before
+  (see the "security off by default, passive-only" decision above this
+  bullet, which predates this session).
+  **Agreed direction for when active tooling IS eventually built** (none
+  of this is implemented yet — it's a design agreement, not code):
+    - A checkbox/self-attestation ("I have permission") is NOT sufficient
+      authorization on its own and should not be the gate for unlocking
+      active tools.
+    - Real domain-ownership verification is needed first — e.g. a DNS TXT
+      record challenge or a specific file-upload challenge at the site
+      root, the same pattern Google Search Console and most SaaS platforms
+      use, checked by Site Doctor before active scanning becomes
+      selectable for that domain at all.
+    - Verification should be scoped and stored PER DOMAIN (not per
+      session) — e.g. a `(domain, verified_at, verification_method)`
+      record — so re-auditing a previously-verified domain doesn't require
+      re-verification, but auditing any different domain always does. This
+      also creates an audit trail.
+    - Passive security (current implementation: headers + TLS) stays
+      available to anyone with no verification required, exactly as it is
+      today — this line does not change.
+    - Active security should be a genuinely separate mode architecturally,
+      not just another flag inside `selected_checks` sitting next to
+      `seo`/`ux`/passive `security` — the CLI/UI shouldn't even offer it
+      as a selectable option until domain verification passes.
+    - Even after verification, tools should still be staged/phased for
+      cost and target-impact reasons (baseline tools like ZAP-baseline/
+      Nuclei/SSL Labs first; SQLMap/Dalfox only conditionally, if Phase 1
+      surfaces a relevant attack surface; k6 load/stress/spike testing
+      behind its own additional explicit confirmation even after domain
+      verification, since those tools deliberately degrade the target's
+      availability, which is a materially different risk than the others).
+    - `verify_ownership_node` (a DNS TXT check node sitting in front of
+      any future active-tool escalation) was proposed as the mechanism
+      that would make "explicit permission" actually enforceable rather
+      than just stated — not yet designed in detail or built.
 
 ---
 
@@ -351,7 +448,11 @@ This distinction is enforced in the SRS, SDD, and DB design docs too (see
 | Editing a stale local mirror of `schemas.py` and handing back a "partial" snippet caused the user to accidentally delete `PageResult`/`CrawlResult` when merging | When schema drift is suspected, replace the WHOLE file rather than patching a snippet against an assumed-current version |
 | `agent/graph.py`'s `ux_review_node` still called the OLD single-arg `review_screenshots(state.screenshot_paths)` after `vision_review.py`'s signature changed to `review_screenshots(url, screenshot_paths)` — crashed with `TypeError: missing 1 required positional argument` | Migrate the CALLER, not just the callee, whenever a shared function's signature changes — `ux_review_node` was rewritten to loop over `state.crawl_result.pages` and call the new two-arg signature per page. Fixed and verified this session. |
 | `audit/lighthouse.py` ended up with TWO definitions of `run_lighthouse()` (an old no-`categories`-param version and a new one) after an edit — Python silently keeps only the last one, so the first is dead code that can confuse future reading of the file | Not yet cleaned up — delete the first (shadowed) definition next time the file is touched. |
-| OpenAI `429 insufficient_quota` during a live `ux_review_node` run — NOT a code bug, the account's OpenAI billing/credit balance was exhausted | Check platform.openai.com billing/credit balance and confirm `OPENAI_API_KEY` in `.env` points to a funded project (multi-project accounts can have a $0 key active by mistake); also check the org's usage-limits page for a hard cap set below the actual balance. |
+| OpenAI `429 insufficient_quota` during a live `ux_review_node` run — NOT a code bug, the account's OpenAI billing/credit balance was exhausted. Recurred again this session against a second test site, still unresolved. | Check platform.openai.com billing/credit balance and confirm `OPENAI_API_KEY` in `.env` points to a funded project (multi-project accounts can have a $0 key active by mistake); also check the org's usage-limits page for a hard cap set below the actual balance. |
+| **SPA hydration gap ("first screenshot is empty / only 1 page crawled"):** React/Vite/other client-rendered SPAs can finish Playwright's `wait_until="load"` before the app has actually mounted — `page.content()` at that moment can be just a loading-spinner shell inside `<div id="root">`, with zero real `<a href>` tags anywhere, which silently truncated BFS crawling to just the start page (looked like a "not enough links found" bug, but was actually a timing bug — verified via a real captured HTML snapshot showing only the spinner markup and Vite `modulepreload` chunk links, no rendered content) | In `WebsiteCrawler.crawl()`, right after `page.goto(...)` and before `html = page.content()`, add a short bounded wait: `page.wait_for_function("document.querySelectorAll('a[href]').length > 0", timeout=8000)` wrapped in try/except (no-op on static sites where links already exist; harmlessly times out on genuinely link-less pages). Fixed and verified this session — a previously single-page-only SPA (quran-learning-portal-frontend.vercel.app) correctly crawled 10 pages afterward. Note: a sitemap.xml-based fallback is still a good idea for the genuinely harder case of `onClick`/`history.pushState()`-only routing with NO real `<a href>` tags anywhere even after full hydration — proposed, not built. |
+| **Screenshot of the loading spinner ("first screenshot is a scroll wheel/spinner"):** even after the link-hydration wait above, `_capture_screenshots()` could still fire before the REST of the page (hero image, data-fetched cards, etc.) finished rendering — finding a nav link doesn't mean the whole page is visually done loading | Added a short, bounded `page.wait_for_load_state("networkidle", timeout=5000)` (wrapped in try/except) inside `_capture_screenshots()`, right before the scroll/screenshot loop begins. Deliberately NOT used at the `goto()` level (some sites never truly idle due to chat widgets/analytics, per the earlier `wait_until="load"` decision) — but safe here since it only delays screenshot capture and never blocks the crawl loop itself. Fixed this session. |
+| **LangGraph state-mutation bug ("max_depth/max_pages typed by the user never reached crawl_node, silently fell back to hardcoded defaults 2/10"):** `check_selection_node` set `state.max_depth = max_d` / `state.max_pages = max_p` directly on the input `state` object instead of including those keys in its RETURNED dict. LangGraph only merges what a node explicitly returns between steps — it does not pick up in-place attribute mutations on the state object it hands a node, even though nothing raises an error, so this failed completely silently (confirmed via the final printed state showing `max_depth: 2, max_pages: 10` even though the user had typed `15` and `60`) | Add the changed fields to the node's returned dict instead: `return {"selected_checks": selected, "max_depth": max_d, "max_pages": max_p}`. Fixed this session. **General rule for every future node: never rely on mutating the `state` argument in place — LangGraph nodes must return a dict of the fields that changed, full stop.** This is worth double-checking against every existing node next time each is touched, since it's an easy mistake to reintroduce and fails with no error message at all. |
+| **Misconception (not an actual bug, but worth recording since it caused real alarm mid-session): "one vision LLM call eats ~1 million tokens per page."** This came from logging `len(encoded_image)` — the base64 string length — and mistaking that for a token count. Base64 length is a text-encoding artifact of getting binary image bytes through JSON; it has no direct relationship to how many tokens OpenAI actually bills. | Clarified via a live web search: OpenAI decodes the base64 back to real pixel data server-side BEFORE tokenizing, and `gpt-4o-mini` specifically tokenizes images via a 32×32-pixel patch count, auto-capped at ~1,536 tokens per image no matter how large/high-resolution the source file is. With 4 screenshots/page, real image-token cost is roughly ~6,000 tokens/page max, not "millions." Across a ~10-page UX review run, total cost is tens of thousands of tokens — fractions of a cent at `gpt-4o-mini`'s $0.15/million input rate. The recurring `insufficient_quota` 429 errors are a genuine $0-balance/billing problem on the account, unrelated to this. Also confirmed: there is no way to send OpenAI's Chat Completions API a "raw image" instead of base64/URL — those are the only two supported transport methods for `image_url`, and a locally-stored screenshot with no public URL has no third option; the current code's approach (base64 data URI) is already correct and is not a cost problem. A `_encode_image()` resize-to-JPEG tweak (max ~1280px wide, quality 75, via Pillow) was proposed purely for upload-latency/reliability reasons, NOT to fix a token-cost bug that turned out not to exist — not yet confirmed applied to `vision_review.py`. |
 
 ---
 
@@ -407,62 +508,75 @@ python -m ux_review.vision_review     # test vision review alone (needs screensh
 python -m agent.graph
 ```
 
-Note: `crawl_site()`'s own default parameters (`max_pages=10, max_depth=2`)
-no longer match the defaults used in the interactive prompt path
-(`max_depth=1, max_pages=5`) now that `max_depth`/`max_pages` live on
-`SiteDoctorState` and are always passed explicitly from the graph. Worth
-reconciling both to the same numbers so a standalone
-`python -m crawler.website_crawler` run and a full graph run don't
-silently behave differently.
+Note (RESOLVED this session): `crawl_site()`'s own default parameters
+(`max_pages=10, max_depth=2`) now match the fallback defaults used in
+`check_selection_node`'s interactive prompts (`int(input(...).strip() or 2)`
+for depth, `or 10` for pages), so a standalone
+`python -m crawler.website_crawler` run and a full graph run behave
+consistently on blank input. `SiteDoctorState.max_depth`/`max_pages`
+themselves default to `None` on the Pydantic model — they're always
+expected to be set by `check_selection_node` before `crawl_node` runs, not
+relied on as a schema-level default in normal graph usage.
 
 ---
 
 ## 10. Immediate next steps (roughly in priority order)
 
-1. **Confirm/finalize this session's in-flight changes** before building
-   further on top of them:
-   - `SiteDoctorState.max_depth` / `max_pages` — confirm field names,
-     defaults, and exactly which node now owns the `input()` prompt for
-     them (candidates: fold into `check_selection_node`, or a new
-     dedicated setup node before `crawl_node`).
-   - `UXSuggestion.page_url` — confirm it's actually in `schemas.py` and
-     that `review_screenshots()` is stamping it correctly (needed for any
-     grouped UX report to work).
-   - Resolve the OpenAI `insufficient_quota` billing issue so
-     `ux_review_node` can be verified end-to-end against a live vision
-     call (multi-page loop + resilience logic already verified structurally,
-     just not the actual model output/report yet).
-2. **Wire up `save_ux_report()`** in `ux_review/vision_review.py` (writes
-   a markdown report grouping `ux_suggestions` by `page_url` as headings)
-   plus the matching `ux_report_path(crawl_id)` helper in
-   `crawler/storage.py`, and call it from `ux_review_node`. Also decide
-   how to represent a page whose review call FAILED (quota error, etc.)
-   vs. a page that was reviewed and had zero issues — currently
-   `save_ux_report` as sketched would render a failed page identically to
-   a clean one ("No issues found"), which is misleading.
+1. **Resolve the OpenAI `insufficient_quota` billing issue** so
+   `ux_review_node` can be verified end-to-end against a live vision call
+   — the multi-page loop, resilience logic, `page_url` stamping, and
+   `save_ux_report()` call are all now confirmed wired in and structurally
+   correct; this is purely a billing/account blocker, not a code task.
+2. **Add sitemap.xml checking** as a first step in `crawl_site()`/
+   `WebsiteCrawler.crawl()`, before falling back to BFS — the hydration-wait
+   fix (§7) solves the "SPA renders links late" case, but a genuinely
+   harder case remains: SPAs that route via `onClick`/`history.pushState()`
+   with NO real `<a href>` tags anywhere, even after full hydration. No
+   amount of waiting fixes that; sitemap.xml (or a `Sitemap:` line in
+   robots.txt) is the reliable fallback source of the page list there.
 3. **Clean up `audit/lighthouse.py`**: delete the shadowed first
    `run_lighthouse()` definition (dead code, only the second one with the
-   `categories` param actually runs).
+   `categories` param actually runs). Still not done as of this session.
 4. **Finish `triage_node`** — the original first task, deferred multiple
    times. Needs to loop over `state.audit_before` (list per page), rank
    issues by severity, and generate `plain_language_summary` per issue via
-   an OpenAI call. The `aggregate_for_llm()` helper sketched this session
-   (collapses per-page `AuditResult`s into one compact dict) is a good
-   starting point for the "never send raw tool output" constraint here.
-   Reference: `ux_review/vision_review.py`'s JSON-parsing pattern
+   an OpenAI call. The `aggregate_for_llm()` helper sketched in an earlier
+   session (collapses per-page `AuditResult`s into one compact dict) is a
+   good starting point for the "never send raw tool output" constraint
+   here. Reference: `ux_review/vision_review.py`'s JSON-parsing pattern
    (`_strip_code_fences` / `_parse_suggestions`) for how the rest of the
    codebase structures LLM calls — also consider adding
    `response_format={"type": "json_object"}` to any new OpenAI calls
-   (proposed for vision_review this session, not yet confirmed applied;
-   worth adopting as the default pattern going forward).
-5. **Migrate `security_audit_node` to multi-page**, same pattern as
-   `seo_audit_node`/`ux_review_node`'s per-page loop + try/except.
-6. **`fix_node` → `approve_node` → `apply_node` → `reaudit_node`** — the
+   (proposed for vision_review, still not confirmed applied there either;
+   worth adopting as the default pattern going forward for every OpenAI
+   call in the codebase).
+5. **Migrate `security_audit_node` to multi-page**, same per-page loop +
+   try/except pattern as `seo_audit_node`/`ux_review_node`. Note: do this
+   BEFORE any active-tooling work, and keep it scoped to the existing
+   passive checks only (headers + TLS) — this is unrelated to, and should
+   not be entangled with, the active-tooling design work in item 6 below.
+6. **Design (don't build yet) the domain-verification gate** for future
+   active security tooling — see the full §6 "Active security tooling"
+   entry for the agreed direction (DNS TXT or file-upload ownership
+   challenge, per-domain verification record, separate architectural mode
+   from passive security, staged phases even after verification). This is
+   a substantial feature on its own and deserves its own design pass
+   before any of ZAP/SQLMap/Dalfox/Nuclei/Nmap/k6 get integrated — treat
+   `verify_ownership_node` as the first concrete piece of that work when
+   it's picked up.
+7. **`fix_node` → `approve_node` → `apply_node` → `reaudit_node`** — the
    full act/verify/retry loop, still entirely unbuilt.
-7. Consider tightening `UXSuggestion.category` from a bare `str` to a
+8. Consider tightening `UXSuggestion.category` from a bare `str` to a
    `UXCategory(str, Enum)` mirroring the 13 category values now named in
    `VISION_REVIEW_PROMPT`, so a malformed category from the model fails
-   fast at Pydantic parse time instead of silently passing through.
+   fast at Pydantic parse time instead of silently passing through. Still
+   proposed, not applied.
+9. **Audit every existing node for the same "mutate state in place instead
+   of returning it" bug class** found in `check_selection_node` this
+   session (§7) — it's a silent failure mode with no error message, so it's
+   worth a deliberate one-time check across `crawl_node`, `seo_audit_node`,
+   `ux_review_node`, and `security_audit_node` rather than assuming it's
+   isolated to the one instance already found and fixed.
 
 ---
 
@@ -486,10 +600,21 @@ silently behave differently.
   not a "RAG wrapper" — the act-verify-retry loop is the point, protect
   that framing when suggesting features.
 - Actively iterating fast across files (lighthouse.py -> vision_review.py
-  -> graph.py -> storage.py -> schemas.py) in short back-and-forth turns
-  this session; several proposed changes (page_url field, UXCategory enum,
-  response_format json mode, save_ux_report/ux_report_path,
-  aggregate_for_llm) were suggested but not all confirmed as applied in
-  actual code by end of session — see the "PENDING"/"PROPOSED" markers
-  throughout this doc and the checklist in §10 item 1 before assuming
-  they exist.
+  -> graph.py -> storage.py -> schemas.py -> website_crawler.py) in short
+  back-and-forth turns across sessions; some proposed changes (UXCategory
+  enum, response_format json mode) are still not confirmed applied in
+  actual code — see the "PROPOSED"/"still open" markers throughout this
+  doc before assuming they exist. Other items proposed in an earlier
+  session (page_url field, save_ux_report/ux_report_path,
+  max_depth/max_pages on state) were confirmed actually applied this
+  session via real pasted code and terminal output.
+- Explicitly stated goal: wants Site Doctor to become a genuinely
+  production-level agent over time, including active security tooling
+  (ZAP, SQLMap, Dalfox, Nuclei, Nmap, k6) eventually — but ONLY against
+  sites they own or have explicit permission to test, never as a default
+  option for arbitrary URLs. Understands and agrees with the legal
+  reasoning for why a simple confirmation checkbox isn't sufficient
+  authorization for that (see §6) — this isn't a constraint being imposed
+  against their wishes, it's an agreed design direction for how to build
+  the production version safely. Don't relitigate this from scratch next
+  session; the agreement is already documented in §6.

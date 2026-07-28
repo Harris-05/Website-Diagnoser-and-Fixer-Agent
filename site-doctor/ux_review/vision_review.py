@@ -213,6 +213,7 @@ def _parse_suggestions(raw_text: str) -> list[UXSuggestion]:
 def _encode_image(screenshot_path: str) -> str:
     image_bytes = Path(screenshot_path).read_bytes()
     encoded_image = base64.b64encode(image_bytes).decode("ascii")
+    print(f"Encoded {screenshot_path} to base64, length {len(encoded_image)}")
     return f"data:image/png;base64,{encoded_image}"
 
 

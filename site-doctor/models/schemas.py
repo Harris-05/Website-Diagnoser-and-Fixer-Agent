@@ -3,7 +3,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -39,6 +39,8 @@ class Issue(BaseModel):
     affected_selector: Optional[str] = Field(
         None, description="CSS selector or element reference, if applicable"
     )
+    source_url: str | None = None
+    source: Literal["lighthouse", "security", "ux"] = "lighthouse"
 
 
 class UXSuggestion(BaseModel):
@@ -104,6 +106,7 @@ class SiteDoctorState(BaseModel):
     ux_suggestions: list[UXSuggestion] = Field(default_factory=list)
     security_findings: list[Issue] = Field(default_factory=list)
     fixes: list[Fix] = Field(default_factory=list)
+    triaged_issues: list[Issue] = []
     max_retries_per_fix: int = 2
     max_depth: int = 2
     max_pages: int = 10
