@@ -45,6 +45,25 @@ class WebsiteCrawler:
                     print(f"Skipping {full_url}: {exc}")
                     continue
 
+                # React/Vite/SPA sites can finish "load" before the app has
+                # actually hydrated -- at that point page.content() is just
+                # a loading spinner inside <div id="root">, with no real
+                # <a href> tags anywhere yet (see CLAUDE.md bug log). Give
+                # the app a short, bounded window to mount real content
+                # before we snapshot the DOM or take screenshots off this
+                # page object. On a static/SSR page this resolves
+                # instantly since links already exist -- effectively a
+                # no-op there. On a genuinely link-less SPA (onClick-only
+                # routing, or a real single-page site) it just times out
+                # harmlessly and we proceed with whatever's there.
+                try:
+                    page.wait_for_function(
+                        "document.querySelectorAll('a[href]').length > 0",
+                        timeout=8000,
+                    )
+                except Exception:
+                    pass
+
                 html = page.content()
                 slug = slugify(url_key)
 
@@ -83,6 +102,19 @@ class WebsiteCrawler:
     def _capture_screenshots(self, page, crawl_id: str, slug: str) -> list[str]:
         """Same scroll-and-capture logic as the single-page version, now
         writing into the per-crawl, per-page cache layout."""
+        # Finding a nav link (the earlier wait in crawl()) doesn't mean the
+        # WHOLE page finished rendering -- data-fetched content (hero,
+        # cards, etc.) can still be mid-load and showing a spinner. Give it
+        # a short bounded window to settle before we start screenshotting.
+        # Same reasoning as goto()'s wait_until -- we avoid "networkidle"
+        # there because some sites never truly idle (chat widgets,
+        # analytics) -- but a short, bounded, best-effort wait here is
+        # safe since it only delays screenshots, never blocks the crawl.
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+
         viewport_height = page.viewport_size["height"]
         page_height = page.evaluate("document.body.scrollHeight")
         num_shots = min(self.max_screenshots, max(1, -(-page_height // viewport_height)))

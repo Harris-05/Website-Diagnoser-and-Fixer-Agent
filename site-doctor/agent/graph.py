@@ -38,9 +38,6 @@ from ux_review.vision_review import review_screenshots,save_ux_report
 # ---- Nodes ----
 
 def check_selection_node(state: SiteDoctorState) -> dict:
-    """Human-in-the-loop entry point: ask which checks to run before any
-    crawling begins. Security defaults to OFF and requires both explicit
-    selection AND an authorization confirmation (SRS FR-03, FR-04, FR-14)."""
     print("\nWhich checks do you want to run?")
     print("  [1] SEO       (Lighthouse: SEO / accessibility / performance)")
     print("  [2] UX        (vision-based usability review)")
@@ -51,11 +48,9 @@ def check_selection_node(state: SiteDoctorState) -> dict:
     mapping = {"1": "seo", "2": "ux", "3": "security"}
     selected = [mapping[n] for n in selected_numbers if n in mapping]
 
-    max_d=int(input("Enter the max depth : ").strip() or 2)
+    max_d = int(input("Enter the max depth : ").strip() or 2)
+    max_p = int(input("Enter the max pages : ").strip() or 10)
 
-    max_p=int(input("Enter the max pages : ").strip() or 10)
-    state.max_depth=max_d
-    state.max_pages=max_p
     if "security" in selected:
         confirm = input(
             "\nYou selected Security. Confirm you are authorized to test this target "
@@ -70,7 +65,7 @@ def check_selection_node(state: SiteDoctorState) -> dict:
         selected = ["seo", "ux"]
 
     print(f"Running: {', '.join(selected)}\n")
-    return {"selected_checks": selected}
+    return {"selected_checks": selected, "max_depth": max_d, "max_pages": max_p}
 
 
 def crawl_node(state: SiteDoctorState) -> dict:
