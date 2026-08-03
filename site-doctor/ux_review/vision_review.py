@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from models.schemas import UXSuggestion
-
+from crawler.utils import slugify
 
 load_dotenv()
 
@@ -233,10 +233,13 @@ def review_screenshots(url: str, screenshot_paths: list[str]) -> list[UXSuggesti
 
     raw_text = response.choices[0].message.content or '{"suggestions": []}'
     suggestions = _parse_suggestions(raw_text)
-    for s in suggestions:
-        s.page_url = url
-    return suggestions
 
+    page_slug = slugify(url)
+    for suggestion in suggestions:
+        suggestion.page_url = url
+        suggestion.id = f"{page_slug}-{suggestion.id}"   # <-- new: makes id globally unique
+
+    return suggestions
 # ux_review/vision_review.py
 from crawler.storage import ux_report_path
 

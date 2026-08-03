@@ -120,4 +120,4 @@ def run_passive_tests(url: str) -> dict:
                 severity=Severity.HIGH,
             )
         )
-    
+    return {"findings": findings}

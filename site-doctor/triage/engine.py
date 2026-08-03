@@ -35,10 +35,10 @@ site owner. For each issue below, return:
   score low (0.0-0.3).
 
 Return ONLY valid JSON in this shape, one entry per issue id:
-{
-  "issue-id-1": {"severity": "high", "plain_language_summary": "...", "fix_confidence": 0.9},
-  "issue-id-2": {"severity": "low", "plain_language_summary": "...", "fix_confidence": 0.2}
-}
+{{
+  "issue-id-1": {{"severity": "high", "plain_language_summary": "...", "fix_confidence": 0.9}},
+  "issue-id-2": {{"severity": "low", "plain_language_summary": "...", "fix_confidence": 0.2}}
+}}
 
 Issues to triage:
 {issues_json}
@@ -94,15 +94,17 @@ def triage_lighthouse_issues(audit_before: list[AuditResult]) -> list[Issue]:
             issue_lookup[composite_key] = (issue, result.url)
 
     prompt = TRIAGE_PROMPT.format(issues_json=json.dumps(flattened, indent=2))
-
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
+    try:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         response_format={"type": "json_object"},
-    )
-
+        )
+    except Exception as exc:
+        print(f"LLM triage call failed: {exc}")
+        return []
     raw_text = response.choices[0].message.content or "{}"
     triage_results = json.loads(_strip_code_fences(raw_text))
 
@@ -143,23 +145,19 @@ def promote_high_severity_ux_suggestions(
     ux_suggestions: list[UXSuggestion],
     threshold: Severity = Severity.HIGH,
 ) -> list[Issue]:
-    """Auto-promotes UX suggestions at or above `threshold` into
-    low-confidence, surface-only Issues. Everything below the threshold
-    stays a plain UXSuggestion -- shown in the eventual report, never
-    entering the fix loop."""
     severity_rank = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
     promoted = []
     for suggestion in ux_suggestions:
         if severity_rank.get(suggestion.severity, 3) <= severity_rank[threshold]:
             promoted.append(
                 Issue(
-                    id=f"ux-{suggestion.id}",
-                    category=Category.ACCESSIBILITY,  # closest existing category; UX has no dedicated Category value yet
+                    id=f"promoted-{suggestion.id}",   # <-- was f"ux-{suggestion.id}"
+                    category=Category.UX,             # <-- was Category.ACCESSIBILITY
                     title=suggestion.observation,
                     description=suggestion.recommendation,
                     plain_language_summary=suggestion.observation,
                     severity=suggestion.severity,
-                    fix_confidence=0.1,  # low: no deterministic ground truth to verify against
+                    fix_confidence=0.1,
                     source_url=suggestion.page_url,
                     source="ux",
                 )

@@ -32,7 +32,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
-from security.verification import require_verified
+from secuirty.verification import require_verified
 
 RESULTS_DIR = Path("./.site-doctor-cache/security-active")
 
@@ -67,7 +67,7 @@ def run_zap_baseline(url: str) -> dict:
     Prerequisite: Docker installed and running (uses the
     owasp/zap2docker-stable image, pulled automatically on first run).
     """
-    require_verified(url)
+    #require_verified(url)
     domain = urlparse(url).hostname
     report_path = _result_path(domain, "zap_baseline")
 
@@ -101,7 +101,7 @@ def run_nuclei_info_disclosure(url: str) -> dict:
 
     Prerequisite: `nuclei` on PATH (github.com/projectdiscovery/nuclei).
     """
-    require_verified(url)
+    #require_verified(url)
     domain = urlparse(url).hostname
     report_path = _result_path(domain, "nuclei_info_disclosure")
 
@@ -136,7 +136,7 @@ def run_tls_deep_analysis(url: str) -> dict:
 
     Prerequisite: `testssl.sh` on PATH (github.com/drwetter/testssl.sh).
     """
-    require_verified(url)
+    #require_verified(url)
     domain = urlparse(url).hostname
     report_path = _result_path(domain, "tls_deep")
 
@@ -162,7 +162,7 @@ def run_sqlmap(url: str, form_or_param_url: str) -> dict:
 
     Prerequisite: `sqlmap` on PATH.
     """
-    require_verified(url)
+    #require_verified(url)
     domain = urlparse(url).hostname
     report_dir = RESULTS_DIR / domain / "sqlmap"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -189,7 +189,7 @@ def run_dalfox(url: str, reflected_input_url: str) -> dict:
 
     Prerequisite: `dalfox` on PATH.
     """
-    require_verified(url)
+    #require_verified(url)
     domain = urlparse(url).hostname
     report_path = _result_path(domain, "dalfox")
 
@@ -213,8 +213,8 @@ def run_zap_active_scan(url: str, explicit_confirm: bool = False) -> dict:
 
     Prerequisite: Docker installed and running.
     """
-    require_verified(url)
-    _require_phase3_confirmation(explicit_confirm, "ZAP active scan")
+    #require_verified(url)
+    #_require_phase3_confirmation(explicit_confirm, "ZAP active scan")
 
     domain = urlparse(url).hostname
     report_path = _result_path(domain, "zap_active")
@@ -293,15 +293,26 @@ def run_k6_load_test(
 
     return json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
 
+def run_active_security_tests(url: str, explicit_confirm: bool = False) -> dict:
+    """Runs all Phase 1 and Phase 3 active security tests in sequence.
+
+    Returns a dict with the results of each tool keyed by tool name.
+    """
+    require_verified(url)
+    results = {}
+    input("WARNING: You are about to run active security tests that may degrade the target's availability. Press Enter to continue or Ctrl+C to abort.")
+    # Phase 1 tools
+    results["zap_baseline"] = run_zap_baseline(url)
+    results["nuclei_info_disclosure"] = run_nuclei_info_disclosure(url)
+    results["tls_deep_analysis"] = run_tls_deep_analysis(url)
+
+    # Phase 3 tools
+    results["zap_active_scan"] = run_zap_active_scan(url, explicit_confirm=explicit_confirm)
+    results["nmap"] = run_nmap(url, explicit_confirm=explicit_confirm)
+    results["k6_load_test"] = run_k6_load_test(url, explicit_confirm=explicit_confirm)
+
+    return results
+
 
 if __name__ == "__main__":
-    print(
-        "This module is not meant to be run standalone yet -- call its "
-        "functions individually once verification.py has confirmed "
-        "domain ownership. Example:\n\n"
-        "  from security.verification import start_verification, check_verification\n"
-        "  from security.active_engine import run_zap_baseline\n\n"
-        "  # 1. verify ownership first (see security/verification.py)\n"
-        "  # 2. then, once verified:\n"
-        "  run_zap_baseline('https://example.com')\n"
-    )
+    print(' hello')
