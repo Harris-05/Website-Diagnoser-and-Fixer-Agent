@@ -1,0 +1,13 @@
+# Test-only dependencies.
+#
+# Deliberately NOT `-r requirements.txt`. The tests cover pure functions
+# only -- no Playwright, no Lighthouse, no LLM calls -- so CI installs
+# just these five packages (~20s) instead of the full runtime set, which
+# pulls jupyterlab, scipy and several LangChain provider SDKs.
+pytest
+
+# needed because the modules under test import them at module load
+pydantic>=2
+python-dotenv
+beautifulsoup4
+openai

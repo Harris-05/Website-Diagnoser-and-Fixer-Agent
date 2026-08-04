@@ -1,0 +1,48 @@
+name: CI
+
+# Runs on every push to a devops/* branch and on every PR into main, so a
+# broken change is visible as a red check on the PR before it is merged.
+on:
+  push:
+    branches:
+      - "devops/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    env:
+      # A literal placeholder, NOT a GitHub Secret -- no real key ever
+      # enters CI. It exists only because some modules build an OpenAI
+      # client at import time, which raises when no key is set at all.
+      # None of the tests make a network call.
+      OPENAI_API_KEY: dummy-key-not-used-by-tests
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: site-doctor/requirements-dev.txt
+
+      # Deliberately requirements-dev.txt, not requirements.txt. The tests
+      # cover pure functions only -- no Playwright, no Chromium, no
+      # Lighthouse CLI, no LLM calls -- so this installs 5 packages in a
+      # few seconds instead of the full runtime set.
+      - name: Install test dependencies
+        working-directory: site-doctor
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        working-directory: site-doctor
+        run: pytest -v
