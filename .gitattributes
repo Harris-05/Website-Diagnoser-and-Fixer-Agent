@@ -1,0 +1,21 @@
+# Files that run on Linux MUST have LF line endings.
+#
+# A shell script checked out with Windows CRLF endings fails on Ubuntu with
+# "bad interpreter: No such file or directory" or "$'\r': command not found" --
+# the \r becomes part of the interpreter path or the command name. Same class
+# of failure for systemd units, which silently refuse to parse.
+#
+# This is enforced here rather than left to each developer's core.autocrlf.
+
+*.sh            text eol=lf
+*.service       text eol=lf
+*.timer         text eol=lf
+Caddyfile       text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Python runs fine either way, but keeping it consistent avoids diffs that are
+# nothing but line-ending changes.
+*.py            text eol=lf
+requirements*.txt text eol=lf
