@@ -1,0 +1,24 @@
+# Keeps the build context small and keeps secrets out of the image.
+
+# Secrets -- must never be baked in. Pass the key at run time with
+# `docker run -e OPENAI_API_KEY=...` instead.
+.env
+
+# Local virtualenv (~200 MB) -- the image installs its own dependencies
+.venv/
+venv/
+
+# Build artifacts, regenerated inside the image
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Previous run output -- would be copied in and then shadowed by the mount
+.site-doctor-cache/
+
+# Documentation that the runtime does not need (several MB of PDFs)
+*.pdf
+*.docx
+
+.git/
