@@ -26,45 +26,6 @@ TRACKED_AUDITS = {
 }
 
 
-def run_lighthouse(url: str) -> dict:
-    """Runs the Lighthouse CLI and returns the parsed JSON report."""
-    # unique filename per URL -- avoids every page's audit overwriting the
-    # same shared report file, which is confusing to debug and would be a
-    # real race condition if audits ever run concurrently
-    url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
-    report_path = Path(f"./.site-doctor-cache/lighthouse-report_{url_hash}.json")
-    report_path.parent.mkdir(exist_ok=True)
-
-    lighthouse_cmd = which("lighthouse") or which("lighthouse.cmd")
-    if lighthouse_cmd is None:
-        npx_cmd = which("npx") or which("npx.cmd")
-    else:
-        npx_cmd = None
-
-    if lighthouse_cmd is None and npx_cmd is None:
-        raise RuntimeError(
-            "Could not find the Lighthouse CLI on PATH. Install it with "
-            "`npm install -g lighthouse` or run through `npx --yes lighthouse ...`."
-        )
-
-    command = [lighthouse_cmd] if lighthouse_cmd is not None else [npx_cmd, "--yes", "lighthouse"]
-
-    subprocess.run(
-        [
-            *command,
-            url,
-            "--output=json",
-            f"--output-path={report_path}",
-            # "=new" is required -- the legacy headless mode fails with
-            # LanternError: NO_LCP on Windows for many real sites, since
-            # it can't reliably compute a paint trace for the performance
-            # category
-            "--chrome-flags=--headless=new",
-            "--quiet",
-        ],
-        check=True,
-    )
-
 def run_lighthouse(url: str, categories: str = "seo,accessibility,performance") -> dict:
     """Runs the Lighthouse CLI and returns the parsed JSON report."""
     # unique filename per URL -- avoids every page's audit overwriting the
