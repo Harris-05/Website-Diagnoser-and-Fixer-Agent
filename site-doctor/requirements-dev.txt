@@ -1,9 +1,8 @@
 # Test-only dependencies.
 #
-# Deliberately NOT `-r requirements.txt`. The tests cover pure functions
-# only -- no Playwright, no Lighthouse, no LLM calls -- so CI installs
-# just these five packages (~20s) instead of the full runtime set, which
-# pulls jupyterlab, scipy and several LangChain provider SDKs.
+# Deliberately NOT `-r requirements.txt`, which pulls jupyterlab, scipy and
+# several unused LangChain provider SDKs. No test makes a network call,
+# starts a browser or runs Lighthouse.
 pytest
 
 # needed because the modules under test import them at module load
@@ -11,3 +10,12 @@ pydantic>=2
 python-dotenv
 beautifulsoup4
 openai
+
+# needed only by tests/test_run_audit.py, which compiles the headless graph.
+# Importing agent.graph pulls the whole node chain in, so its import-time
+# dependencies have to be present. No browser is downloaded (that is
+# `playwright install`, which these tests never call) and no LLM is contacted.
+langgraph
+playwright
+reportlab
+dnspython
