@@ -1,1 +1,25 @@
+# Crawl artifacts, Lighthouse reports, generated PDFs
 .site-doctor-cache/
+
+# Python build artifacts -- regenerated automatically, never commit
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets -- real keys live in .env locally, GitHub Secrets in CI,
+# AWS Parameter Store at runtime. Never committed.
+.env
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Microsoft Office lock and recovery files
+~$*
+*.tmp
