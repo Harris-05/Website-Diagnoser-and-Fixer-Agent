@@ -13,7 +13,11 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/Harris-05/Website-Diagnoser-and-Fixer-Agent.git"
+# SSH, not HTTPS: the repository is private, and an HTTPS clone would stop to
+# ask for credentials, which fails in a non-interactive deploy. Authentication
+# is a GitHub *deploy key* -- see "Deploy key" in deploy/README.md. Generate it
+# before running this script.
+REPO_URL="git@github.com:Harris-05/Website-Diagnoser-and-Fixer-Agent.git"
 BRANCH="${DEPLOY_BRANCH:-test}"
 APP_DIR="/opt/sitedoctor"
 WEB_DIR="/var/www/sitedoctor"
@@ -104,7 +108,25 @@ log "Application source ($BRANCH)"
 if [[ -d "$APP_DIR/.git" ]]; then
   echo "already cloned"
 else
-  git clone --branch "$BRANCH" --depth 20 "$REPO_URL" "$APP_DIR"
+  # Fail with an explanation rather than hanging on a credential prompt.
+  if ! sudo -u "$RUN_USER" -H ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q 'successfully authenticated'; then
+    cat >&2 <<'ERR'
+ERROR: this instance cannot authenticate to GitHub.
+
+The repository is private, so a deploy key is required. As the ubuntu user:
+
+    ssh-keygen -t ed25519 -C "sitedoctor-ec2" -f ~/.ssh/id_ed25519 -N ""
+    cat ~/.ssh/id_ed25519.pub
+
+Add that public key at:
+    Repo -> Settings -> Deploy keys -> Add deploy key
+    (read-only access is enough -- do NOT tick "Allow write access")
+
+Then re-run this script.
+ERR
+    exit 1
+  fi
+  sudo -u "$RUN_USER" -H git clone --branch "$BRANCH" --depth 20 "$REPO_URL" "$APP_DIR"
 fi
 chown -R "$RUN_USER:$RUN_USER" "$APP_DIR"
 

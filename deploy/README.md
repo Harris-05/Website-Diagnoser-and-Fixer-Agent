@@ -52,13 +52,39 @@ failure rather than as memory exhaustion. `--max-pages` is capped at 2 in the
 systemd unit for the same reason. If audits fail unpredictably, check
 `free -h` and `journalctl -k | grep -i oom` before suspecting the code.
 
+## Deploy key (do this first)
+
+The repository is **private**, so the instance cannot clone over HTTPS — it
+would stop to ask for a password and a non-interactive deploy would hang. It
+authenticates with a GitHub deploy key instead.
+
+On the instance, as `ubuntu`:
+
+```bash
+ssh-keygen -t ed25519 -C "sitedoctor-ec2" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add that public key at **Repo → Settings → Deploy keys → Add deploy key**.
+Leave **"Allow write access" unticked** — the instance only ever needs to read.
+A read-only key that leaks cannot be used to push malicious code.
+
+Verify before going further:
+
+```bash
+ssh -T git@github.com     # expect "successfully authenticated"
+```
+
+A deploy key is scoped to this one repository, unlike a personal access token,
+which would carry your whole account's access onto a public-facing server.
+
 ## First-time provisioning
 
-Once per instance:
+Once per instance, after the deploy key works:
 
 ```bash
 ssh -i ~/.ssh/sitedoctor-key.pem ubuntu@<elastic-ip>
-git clone --branch test https://github.com/Harris-05/Website-Diagnoser-and-Fixer-Agent.git /tmp/sd
+git clone --branch test git@github.com:Harris-05/Website-Diagnoser-and-Fixer-Agent.git /tmp/sd
 sudo bash /tmp/sd/deploy/setup-ec2.sh
 sudo nano /etc/sitedoctor/env      # real OPENAI_API_KEY and SITEDOCTOR_TARGET_URL
 ```
