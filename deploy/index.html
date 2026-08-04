@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site Doctor — deployment status</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+    line-height: 1.6; max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .sub { opacity: 0.7; margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(128,128,128,0.3); }
+  th { font-weight: 600; width: 12rem; }
+  .ok { color: #1a7f37; font-weight: 600; }
+  .pending { opacity: 0.65; }
+  a { color: inherit; }
+  footer { margin-top: 2rem; font-size: 0.875rem; opacity: 0.6; }
+</style>
+</head>
+<body>
+
+<h1>Site Doctor</h1>
+<p class="sub">AI-powered website auditor — deployment endpoint</p>
+
+<p>
+  This instance is serving correctly. It runs the audit pipeline on a schedule
+  and publishes the reports it generates.
+</p>
+
+<table>
+  <tr><th>Web server</th><td class="ok">running</td></tr>
+  <tr><th>Audit pipeline</th><td>scheduled daily (systemd timer)</td></tr>
+  <tr><th>Reports</th><td><a href="/reports/">/reports/</a></td></tr>
+  <tr><th>API</th><td class="pending">not deployed yet</td></tr>
+  <tr><th>Frontend</th><td class="pending">not built yet</td></tr>
+</table>
+
+<p>
+  Deployed automatically from the <code>test</code> branch by GitHub Actions on
+  every push.
+</p>
+
+<footer>
+  Calcite Technology internship — DevOps deployment.
+  Infrastructure by Abdul Raffay; application by Haris.
+</footer>
+
+</body>
+</html>

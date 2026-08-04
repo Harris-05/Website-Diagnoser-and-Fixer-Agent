@@ -1,0 +1,75 @@
+# Caddy configuration for Site Doctor.
+#
+# Installed to /etc/caddy/Caddyfile by deploy/setup-ec2.sh.
+# Apply changes with:  sudo systemctl reload caddy
+#
+# ---------------------------------------------------------------------------
+# CURRENT STATE: plain HTTP on the instance's IP address.
+#
+# Deliberate. Let's Encrypt issues a certificate by connecting to a HOSTNAME
+# over port 80 and checking it reaches this machine. Until DNS points here,
+# that check cannot succeed -- and Caddy retrying a hostname that does not
+# resolve will hit Let's Encrypt's failure rate limit and lock the name out
+# for an hour at a time. So HTTP first, hostname second.
+# ---------------------------------------------------------------------------
+
+:80 {
+	root * /var/www/sitedoctor
+
+	# Generated audit reports, with a directory listing so they are
+	# downloadable without needing to know each filename.
+	handle /reports/* {
+		file_server browse
+	}
+
+	handle {
+		file_server
+	}
+
+	encode gzip
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}
+
+# ---------------------------------------------------------------------------
+# WHEN THE DOMAIN IS READY
+#
+# 1. Confirm DNS actually resolves to this box FIRST:
+#        dig +short sitedoctor.example.com
+#    It must print this instance's Elastic IP. If it prints nothing, wait --
+#    do not proceed, or you will burn Let's Encrypt retries.
+#
+# 2. Replace the `:80 {` line above with the real hostname, e.g.
+#        sitedoctor.example.com {
+#    Caddy then obtains and renews a certificate automatically, and redirects
+#    HTTP to HTTPS on its own. No certbot, no cron job, no manual renewal.
+#
+# 3. sudo systemctl reload caddy
+#
+# 4. Watch it happen:  sudo journalctl -u caddy -f
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# WHEN HARIS'S API EXISTS
+#
+# Uncomment this block inside the site above. It sends /api/* to the FastAPI
+# service on localhost and leaves everything else served as static files, so
+# the React frontend and the API share one hostname and there is no CORS
+# configuration to get wrong.
+#
+#	handle_path /api/* {
+#		reverse_proxy 127.0.0.1:8000
+#	}
+#
+# The React build would then be served from this same root: point the build
+# output at /var/www/sitedoctor and add
+#
+#	try_files {path} /index.html
+#
+# inside the final `handle` block so client-side routing works on refresh.
+# ---------------------------------------------------------------------------

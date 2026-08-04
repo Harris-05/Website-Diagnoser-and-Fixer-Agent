@@ -1,0 +1,58 @@
+name: Deploy to EC2
+
+# Only the `test` branch deploys. When main becomes the live instance, change
+# this one line to `main` -- that is the whole switch.
+on:
+  push:
+    branches:
+      - test
+  # Lets you redeploy the current branch from the Actions tab without pushing.
+  workflow_dispatch:
+
+# Two pushes deploying at once would fight over the same instance.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy over SSH
+    runs-on: ubuntu-latest
+
+    # Wait for tests to pass first? Deliberately not: ci.yml runs on the same
+    # push, and gating here would need workflow_run plumbing that makes the
+    # failure modes harder to read. The CI check is visible next to this one.
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Raw ssh rather than a third-party action: fewer moving parts, and
+      # every line is explainable in a viva.
+      - name: Write the SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      # Pins the server's host key so the connection cannot be silently
+      # man-in-the-middled. Prefer this over StrictHostKeyChecking=no.
+      - name: Trust the instance host key
+        run: ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run the deploy script on the instance
+        run: |
+          ssh -i ~/.ssh/deploy_key ubuntu@${{ secrets.EC2_HOST }} \
+            'sudo bash /opt/sitedoctor/deploy/remote-deploy.sh'
+
+      # Fails the job if the site is not answering afterwards, so a broken
+      # deploy shows as a red check instead of passing silently.
+      - name: Smoke test
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://${{ secrets.EC2_HOST }}/")
+          echo "GET / returned $code"
+          test "$code" = "200"
+
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

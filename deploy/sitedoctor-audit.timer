@@ -1,0 +1,18 @@
+[Unit]
+Description=Run the Site Doctor audit daily
+Documentation=https://github.com/Harris-05/Website-Diagnoser-and-Fixer-Agent
+
+[Timer]
+# Daily at 03:00 server time. The instance is in us-east-1, so that is not
+# 03:00 in Islamabad -- check with `systemctl list-timers` for the real
+# next-run time rather than assuming.
+OnCalendar=daily
+# Spread the start by up to 15 minutes so it never collides with the
+# unattended-upgrades window, which also competes for this box's 908 MB.
+RandomizedDelaySec=15m
+# If the instance was stopped when the timer was due, run once on boot
+# instead of silently skipping the day.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

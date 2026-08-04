@@ -1,0 +1,49 @@
+[Unit]
+Description=Site Doctor website audit (one-shot)
+Documentation=https://github.com/Harris-05/Website-Diagnoser-and-Fixer-Agent
+# Needs DNS and outbound network: it crawls a site and calls the OpenAI API.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/sitedoctor/site-doctor
+
+# Read by systemd as root, then privileges drop to ubuntu -- so the file can
+# stay 600 root-only and the key never appears in the unit or in `ps`.
+EnvironmentFile=/etc/sitedoctor/env
+
+# Playwright's browsers live under the ubuntu user's cache.
+Environment=PLAYWRIGHT_BROWSERS_PATH=/home/ubuntu/.cache/ms-playwright
+
+# bash -c because systemd does not expand $VARIABLES inside ExecStart itself.
+# max-pages is deliberately 2: each page runs Chromium to crawl and then a
+# separate Chrome for Lighthouse, on a box with 908 MB of RAM.
+ExecStart=/bin/bash -c '/opt/sitedoctor/venv/bin/python run_audit.py \
+    --url "$SITEDOCTOR_TARGET_URL" \
+    --checks seo \
+    --max-pages 2 \
+    --max-depth 1'
+
+# Publish whatever PDFs the run produced. `|| true` so a run that generated
+# no report still counts as a success rather than failing the unit.
+ExecStartPost=/bin/bash -c 'cp -f /opt/sitedoctor/site-doctor/.site-doctor-cache/*.pdf /var/www/sitedoctor/reports/ 2>/dev/null || true'
+
+# An audit crawls, runs Lighthouse per page, then makes LLM calls. Generous,
+# but bounded so a hung browser cannot block the timer forever.
+TimeoutStartSec=1800
+
+StandardOutput=journal
+StandardError=journal
+
+# Modest hardening -- the process only needs to read the repo and write its
+# cache plus the web root.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/sitedoctor /var/www/sitedoctor
+
+[Install]
+WantedBy=multi-user.target
