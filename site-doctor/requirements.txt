@@ -1,41 +1,47 @@
-langgraph
-langchain-anthropic
-anthropic
-playwright
-pydantic>=2
-fastapi
-uvicorn
-streamlit
-Pillow
-langchain>=1.3.10
-langchain-openai>=1.1.1
-python-dotenv>=1.2.0
-ipykernel>=7.1.0
-langchain-anthropic>=1.4.6
-langchain-model-profiles>=0.0.4
-langchain-tavily>=0.2.13
-tavily-python>=0.7.13
-tavily>=1.1.0
-langchain-community>=0.4.1
-pypdf>=6.13.3
-langchain-text-splitters>=1.0.0
-mcp>=1.21.1
-langchain-mcp-adapters>=0.1.13
-langgraph>=1.0.3
-langgraph-cli>=0.4.9
-langgraph-api>=0.5.37
-ipywidgets>=8.1.8
-sounddevice>=0.5.3
-scipy>=1.16.3
-langchain-google-vertexai>=3.0.3
-langchain-google-genai>=3.1.0
-langsmith>=0.8.18
-langchain-core>=1.3.3
-jupyterlab>=4.5.9
-dnspython
+# Runtime dependencies for Site Doctor.
+#
+# Trimmed to what the code actually imports. Verified by auditing every
+# import statement across agent/ audit/ crawler/ fix/ models/ report/
+# secuirty/ triage/ ux_review/ -- including imports inside function bodies,
+# not just at the top of files.
+#
+# The previous version listed 38 packages. 30 were never imported anywhere,
+# and their overlapping ">=" constraints made pip's resolver backtrack badly:
+# a single docker build downloaded opentelemetry-proto 12 times before being
+# abandoned.
 
-# Imported by the code but previously missing from this file, so a clean
-# `pip install -r requirements.txt` left the project unable to start:
-beautifulsoup4     # crawler/utils.py imports bs4
-reportlab          # report/generate_pdf.py, imported by agent/graph.py at module load
-openai             # used directly (was only arriving transitively via langchain-openai)
+beautifulsoup4     # crawler/utils.py           -> bs4
+dnspython          # secuirty/verification.py   -> dns.resolver
+langgraph          # agent/graph.py             -> StateGraph, END
+openai             # triage/, fix/, ux_review/  -> OpenAI client
+playwright         # crawler/                   -> sync_playwright
+pydantic>=2        # models/schemas.py          -> BaseModel, Field
+python-dotenv      # triage/, fix/, ux_review/  -> load_dotenv
+reportlab          # report/generate_pdf.py     -> platypus, lib
+
+# ---------------------------------------------------------------------------
+# Removed, with reasons -- restore any line if you start importing it.
+#
+#   jupyterlab, ipykernel, ipywidgets   notebook tooling, not used at runtime
+#   sounddevice, scipy                  audio/scientific, nothing imports them
+#   Pillow, pypdf                       no PIL or pypdf import anywhere
+#
+#   anthropic, langchain-anthropic      other LLM providers; this project
+#   langchain-google-vertexai           calls OpenAI directly via the openai
+#   langchain-google-genai              SDK, not through LangChain wrappers
+#
+#   langchain, langchain-core           the code uses langgraph's StateGraph
+#   langchain-openai, langchain-community   only. langchain-core still gets
+#   langchain-text-splitters            installed automatically as langgraph's
+#   langchain-model-profiles, langsmith     own dependency.
+#   langgraph-cli, langgraph-api
+#
+#   langchain-tavily, tavily-python     web search; fix/suggest.py uses the
+#   tavily                              OpenAI Responses API instead
+#
+#   mcp, langchain-mcp-adapters         no MCP client/server in the code
+#
+#   fastapi, uvicorn, streamlit         nothing imports them -- there is no
+#                                       HTTP surface or dashboard yet. Add
+#                                       them back in the commit that adds one.
+# ---------------------------------------------------------------------------
