@@ -1,9 +1,24 @@
 # Findings from the DevOps pass
 
-Written by Abdul Raffay while setting up tests and CI. **Nothing in this
-list has been changed by me** — every item is in code that belongs to the
-feature work, so it's yours to decide on. I've only added tests, CI config,
-`.gitignore` entries, and three missing lines in `requirements.txt`.
+Written by Abdul Raffay while setting up tests and CI.
+
+**Status of each item on this branch:**
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | `security_audit_node` calls the active security tooling | **Left for you** — behavioural + architectural |
+| 2 | `run_lighthouse()` defined twice | ✅ Fixed (provably a no-op) |
+| 3 | `normalize_url()` raises `IndexError` | **Left for you** — changes behaviour |
+| 4 | `extract_links()` docstring wrong | ✅ Fixed (comment only) |
+| 5 | Unused `import site` | ✅ Fixed (no references) |
+| 6 | `requirements.txt` | ✅ 3 missing packages added; trimming/pinning left for you |
+| 7 | `CLAUDE.md` drift | ✅ Fixed, plus a new §16 on tests/CI |
+| 8 | Containerisation blockers | Informational |
+
+**The two I deliberately did not touch (#1 and #3) both change how the
+code behaves**, and #1 may be work of yours that's still in progress.
+Everything I did fix is either a comment or code that provably never
+executed. 61 tests pass before and after.
 
 Ordered by how much it matters.
 
