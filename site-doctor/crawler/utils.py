@@ -1,7 +1,6 @@
 """URL and link-handling utilities for the multi-page crawler."""
 
 import re
-import site
 from urllib.parse import urljoin, urlparse
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -81,9 +80,12 @@ def extract_links(html: str, base_url: str) -> list[str]:
             relative links to absolute ones.
 
     Returns:
-        list[str]: A de-duplicated list of normalized, absolute, internal
-        URLs. Non-page links (mailto:, tel:, javascript:, in-page #anchors)
-        are excluded.
+        list[str]: A de-duplicated list of internal links in normalize_url()
+        form, i.e. WITHOUT a scheme -- "site.com/about", not
+        "https://site.com/about". These are de-duplication keys for the BFS
+        queue, not navigable URLs; WebsiteCrawler._with_scheme() re-attaches
+        the scheme before Playwright uses them. Non-page links (mailto:,
+        tel:, javascript:, in-page #anchors) are excluded.
     """
     soup = BeautifulSoup(html, "html.parser")
     links: set[str] = set()

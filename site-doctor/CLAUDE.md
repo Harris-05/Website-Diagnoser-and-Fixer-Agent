@@ -85,11 +85,9 @@ site-doctor/
         lighthouse.py         <- wraps Lighthouse CLI subprocess, parses
                                  ONLY tracked audit IDs (never sends raw
                                  report anywhere). Runs per-page now (see
-                                 §4). NOTE: file currently has TWO
-                                 definitions of run_lighthouse() — the
-                                 first (no `categories` param) is dead
-                                 code silently shadowed by the second;
-                                 not yet cleaned up.
+                                 §4). Used to carry two definitions of
+                                 run_lighthouse(); the dead shadowed one
+                                 has been deleted.
     ux_review/
         vision_review.py      <- sends multiple screenshots in ONE call to
                                  a vision LLM, parses UXSuggestion objects.
@@ -149,12 +147,17 @@ site-doctor/
     models/
         schemas.py             <- ALL Pydantic models (see §5). Issue now
                                  has suggested_solution/solution_sources
-                                 fields (added this session for fix/engine.py)
+                                 fields (added this session for fix/suggest.py)
                                  in addition to source_url/source (added
                                  for triage). Full current version
                                  confirmed via a complete file paste this
                                  session, not just a diff.
-    tests/                     <- empty, not yet used
+    tests/                     <- pytest unit tests for the pure functions
+                                 (crawler/utils.py, crawler/storage.py,
+                                 parse_report(), models/schemas.py, and
+                                 triage/engine.py minus its LLM call). No
+                                 network, browser, Node or LLM call, so they
+                                 run in CI. See §16.
 ```
 
 ---
@@ -203,7 +206,7 @@ concern (`fix/mechanical.py`-style real patch generation, not this file).
 | `ux_review_node` | **Done, fully confirmed** | Loops over `state.crawl_result.pages`, calls `review_screenshots(page.url, page.screenshot_paths)` per page inside a try/except, accumulates into `ux_suggestions`, calls `save_ux_report(...)` before returning. Still blocked on an OpenAI `insufficient_quota` (429) billing issue for full end-to-end verification against a live vision response — structurally confirmed working otherwise. |
 | `security_audit_node` | **Done (passive-only), relocated, still single-page** | Logic moved to `secuirty/passive_checks.py`, exposed as `run_passive_tests(url)`. `graph.py`'s node is a thin call-through. Same checks as before (5 HTTP headers + TLS validity/expiry + HTTPS presence). Still only audits `state.url` (home page) — not yet migrated to loop over `crawl_result.pages`. Several `graph.py` imports (`socket`, `ssl`, `urllib.request`, `datetime`/`timezone`, `urlparse`, possibly `Category`/`Severity`/`AuditResult`) are now likely dead code left over from before this logic moved out. |
 | `triage_node` | **Implemented, one live bug found and fixed this session** | Combines three sources into ONE flat, ranked `triaged_issues` list via `triage/engine.py` — see §13 for full design. A real live-run bug was hit and fixed this session: `TRIAGE_PROMPT.format(issues_json=...)` raised `KeyError: '\n  "issue-id-1"'` because the prompt's literal JSON example (`{"issue-id-1": {...}}`) has unescaped curly braces that `str.format()` tries to interpret as placeholders. Fixed by doubling every literal brace (`{{`/`}}`) in the prompt template, leaving only the real `{issues_json}` placeholder single. This crash happened INSIDE `triage_lighthouse_issues()`, meaning the earlier composite-key collision fix (§13) still has not been confirmed working end-to-end against real repeated-id data — the run never got past the `.format()` call to actually test it. |
-| `fix_node` | **Implemented this session, not yet run live** | No longer a stub. Consumes `state.triaged_issues`, calls `suggest_fix(issue)` (from `fix/engine.py`) on each, returns the same list with `suggested_solution`/`solution_sources`/refined `fix_confidence` populated in place. See §15 for full design, the two bugs found in code review (legacy `web_search_preview` tool name, unsafe dict indexing) and fixed before use, and the schema fields this required. |
+| `fix_node` | **Implemented this session, not yet run live** | No longer a stub. Consumes `state.triaged_issues`, calls `suggest_fix(issue)` (from `fix/suggest.py`) on each, returns the same list with `suggested_solution`/`solution_sources`/refined `fix_confidence` populated in place. See §15 for full design, the two bugs found in code review (legacy `web_search_preview` tool name, unsafe dict indexing) and fixed before use, and the schema fields this required. |
 | `approve_node` | **STUB** | Not started. Intended as a LangGraph human-in-the-loop interrupt point — the actual point where the human sees `fix_node`'s report and decides whether to let the agent proceed into the real apply/verify/retry loop. |
 | `apply_node` | **STUB** | Not started. |
 | `reaudit_node` | **STUB** | Not started. |
@@ -223,9 +226,11 @@ class Category(str, Enum):
     ACCESSIBILITY = "accessibility"
     PERFORMANCE = "performance"
     SECURITY = "security"
-    # Known gap: no UX value. promote_high_severity_ux_suggestions() in
-    # triage/engine.py currently stamps promoted UX issues with
-    # Category.ACCESSIBILITY as an inaccurate placeholder. Not resolved.
+    UX = "ux"
+    # RESOLVED: UX used to be missing here, and
+    # promote_high_severity_ux_suggestions() stamped promoted UX issues with
+    # Category.ACCESSIBILITY as an inaccurate placeholder. Both are fixed --
+    # the enum has a real UX value and triage/engine.py uses it.
 
 class Severity(str, Enum):
     HIGH = "high"
@@ -259,7 +264,7 @@ class Issue(BaseModel):
         # fix_node's suggest_fix(). PROPOSE step only, no HTML touched.
     solution_sources: list[str] = Field(default_factory=list)
         # NEW this session -- URLs cited by the web-search-eligible
-        # (HIGH/MEDIUM severity) fix suggestion path in fix/engine.py.
+        # (HIGH/MEDIUM severity) fix suggestion path in fix/suggest.py.
         # Empty for LOW-severity issues (no search call made) and for any
         # issue where the search call failed and fell back.
 
@@ -375,7 +380,7 @@ before/after HTML diff) is still a separate, later, unbuilt step.
   discards everything except a small `TRACKED_AUDITS` allowlist — the raw
   report never reaches an LLM call. This extended into `triage/engine.py`'s
   `aggregate_for_llm()` (collapses per-page issues into a compact list for
-  one batched triage call) and into `fix/engine.py`, which only ever sends
+  one batched triage call) and into `fix/suggest.py`, which only ever sends
   an issue's `title`/`description`/`category` to the LLM, never raw
   Lighthouse/tool JSON.
 - **Screenshots are conditional on UX being selected.** `crawl_site()` /
@@ -387,14 +392,14 @@ before/after HTML diff) is still a separate, later, unbuilt step.
   definitions. `response_format={"type": "json_object"}` and a
   `UXCategory` enum were both proposed for this file — STILL not
   confirmed applied there specifically (they ARE confirmed applied in the
-  newer `triage/engine.py` and `fix/engine.py` files).
+  newer `triage/engine.py` and `fix/suggest.py` files).
 - **Multiple screenshots sent in ONE vision LLM call per page**, with the
   prompt told they're the same page in scroll order — extended across
   pages too: `ux_review_node` calls `review_screenshots(url,
   screenshot_paths)` once PER PAGE, not once per screenshot.
 - **`gpt-4o-mini`, not a frontier model**, used everywhere — deliberate
   cost control. Both Chat Completions AND the Responses API (for
-  `fix/engine.py`'s web-search-augmented suggestions) now use it.
+  `fix/suggest.py`'s web-search-augmented suggestions) now use it.
 - **Active security tooling (ZAP active scan, SQLMap, Dalfox, Nuclei,
   Nmap, k6 load/stress/spike) is deliberately OUT of the current build,
   and must NOT be added to the default "audit any URL" flow — this is a
@@ -451,16 +456,16 @@ before/after HTML diff) is still a separate, later, unbuilt step.
 | `save_manifest()` crashed with `FileNotFoundError` on zero successful pages | `path.parent.mkdir(parents=True, exist_ok=True)` before every write |
 | Editing a stale local mirror of `schemas.py` and handing back a partial snippet risked dropping fields on merge | When schema drift is suspected, replace the WHOLE file rather than patching a snippet against an assumed-current version — this was actually done correctly this session (full `schemas.py` paste + full corrected file returned). |
 | `ux_review_node` called the OLD single-arg `review_screenshots(...)` after the function's signature changed to two args | Migrate the CALLER, not just the callee, whenever a shared function's signature changes |
-| `audit/lighthouse.py` has TWO definitions of `run_lighthouse()` — first is dead code, silently shadowed | Not yet cleaned up |
+| `audit/lighthouse.py` had TWO definitions of `run_lighthouse()` — the first was dead code, silently shadowed by the second | Deleted the first definition. Both call sites already resolved to the second, and `run_lighthouse(url)` still works since `categories` has a default. |
 | OpenAI `429 insufficient_quota` during live `ux_review_node` runs — NOT a code bug, account billing/credit balance exhausted, recurred multiple times, still unresolved | Check platform.openai.com billing/credit balance, confirm `OPENAI_API_KEY` points to a funded project, check org usage-limits page |
 | **SPA hydration gap** — React/Vite SPAs can finish `wait_until="load"` before the app mounts, leaving `page.content()` as just a loading-spinner shell with zero real links, silently truncating BFS crawling to one page | Add `page.wait_for_function("document.querySelectorAll('a[href]').length > 0", timeout=8000)` (try/except-wrapped) right after `page.goto()`, before reading `page.content()`. Fixed and verified — a previously single-page-only SPA correctly crawled 10 pages afterward. A sitemap.xml fallback is still worth building for the harder case of `onClick`/`history.pushState()`-only routing with NO real `<a href>` anywhere even after hydration — proposed, not built. |
 | **Screenshot of the loading spinner** — even after the link-hydration wait, the REST of the page could still be mid-render when `_capture_screenshots()` fires | Added a short, bounded `page.wait_for_load_state("networkidle", timeout=5000)` (try/except-wrapped) inside `_capture_screenshots()`, right before the scroll/screenshot loop. Deliberately not used at `goto()` level (some sites never idle) — safe here since it only delays screenshot capture. Fixed. |
 | **LangGraph state-mutation bug** — `check_selection_node` mutated `state.max_depth`/`state.max_pages` directly instead of returning them; LangGraph doesn't pick up in-place mutations, so the typed values silently never reached `crawl_node` | Return the changed fields explicitly instead. **General rule: LangGraph nodes must never rely on mutating `state` in place.** Worth auditing every node for this pattern — still an open item (§10/§14). |
 | **Misconception, not a real bug:** "one vision LLM call eats ~1 million tokens per page," from mistaking base64 string length for token count | Confirmed via web search: OpenAI decodes base64 to real pixels before tokenizing; `gpt-4o-mini` tokenizes images via a 32×32-pixel patch count, capped at ~1,536 tokens/image regardless of source file size. Real cost across a full multi-page UX review run is tens of thousands of tokens — fractions of a cent. The `insufficient_quota` errors are a genuine billing issue, unrelated. Also confirmed: base64 data URI is the ONLY viable transport for locally-stored screenshots with no public URL — not a workaround, the correct approach already in use. |
 | **`triage/engine.py` issue-ID collision across pages** — the first version's lookup was keyed by bare `issue.id` (e.g. `"heading-order"`), which recurs across many pages of the same site, silently overwriting/collapsing distinct per-page issues | Key both `aggregate_for_llm()` and `triage_lighthouse_issues()`'s lookup on a composite `f"{page_url}::{issue.id}"` string instead, leaving the real `Issue.id` untouched (still needed as the raw Lighthouse audit key for `reaudit_node` later). Fixed in code review — **still not confirmed working against a live run**, since the very next live run hit the separate `.format()` bug below before ever reaching the point where this fix would be exercised. |
-| **`triage/engine.py` `str.format()` KeyError, hit on a live run this session** — `TRIAGE_PROMPT.format(issues_json=...)` crashed with `KeyError: '\n  "issue-id-1"'`. The prompt's literal JSON example block (`{"issue-id-1": {"severity": ...}}`) contains unescaped `{`/`}` characters, which Python's `str.format()` interprets as placeholders to fill in — not just the intended `{issues_json}` — so it tried (and failed) to look up `"issue-id-1"` as a keyword argument. | Escaped every literal brace in the prompt template by doubling it (`{{`/`}}`), leaving only the real `{issues_json}` placeholder single. Fixed this session. **General rule: any prompt string built with `.format()` that also contains literal JSON example braces needs every literal brace doubled, or use a different substitution method (e.g. simple string concatenation, or an f-string, or `.replace()`) instead.** `fix/engine.py`'s `_prompt()` function already does this correctly via an f-string with doubled braces (`f'{{"suggested_solution": ...}}'`) — worth using as the reference pattern. |
-| **`fix/engine.py` used the legacy `web_search_preview` Responses API tool name** — still functional but OpenAI's current guidance is to use `"web_search"` for new integrations; `web_search_preview` is kept only for existing/legacy code and lacks newer controls | Changed `tools=[{"type": "web_search_preview"}]` to `tools=[{"type": "web_search"}]`. Fixed in code review before first live use. |
-| **`fix/engine.py` used direct dict indexing (`parsed["suggested_solution"]`) on LLM JSON responses** — a malformed/incomplete response would raise a raw `KeyError` instead of degrading gracefully into the function's own `except Exception` fallback | Changed to `parsed.get("suggested_solution")`/`parsed.get("confidence")` with an explicit `None` check that raises a clearer `ValueError` if either is missing — still caught by `suggest_fix()`'s outer try/except, just with a more diagnosable failure mode. Fixed in code review before first live use. |
+| **`triage/engine.py` `str.format()` KeyError, hit on a live run this session** — `TRIAGE_PROMPT.format(issues_json=...)` crashed with `KeyError: '\n  "issue-id-1"'`. The prompt's literal JSON example block (`{"issue-id-1": {"severity": ...}}`) contains unescaped `{`/`}` characters, which Python's `str.format()` interprets as placeholders to fill in — not just the intended `{issues_json}` — so it tried (and failed) to look up `"issue-id-1"` as a keyword argument. | Escaped every literal brace in the prompt template by doubling it (`{{`/`}}`), leaving only the real `{issues_json}` placeholder single. Fixed this session. **General rule: any prompt string built with `.format()` that also contains literal JSON example braces needs every literal brace doubled, or use a different substitution method (e.g. simple string concatenation, or an f-string, or `.replace()`) instead.** `fix/suggest.py`'s `_prompt()` function already does this correctly via an f-string with doubled braces (`f'{{"suggested_solution": ...}}'`) — worth using as the reference pattern. |
+| **`fix/suggest.py` used the legacy `web_search_preview` Responses API tool name** — still functional but OpenAI's current guidance is to use `"web_search"` for new integrations; `web_search_preview` is kept only for existing/legacy code and lacks newer controls | Changed `tools=[{"type": "web_search_preview"}]` to `tools=[{"type": "web_search"}]`. Fixed in code review before first live use. |
+| **`fix/suggest.py` used direct dict indexing (`parsed["suggested_solution"]`) on LLM JSON responses** — a malformed/incomplete response would raise a raw `KeyError` instead of degrading gracefully into the function's own `except Exception` fallback | Changed to `parsed.get("suggested_solution")`/`parsed.get("confidence")` with an explicit `None` check that raises a clearer `ValueError` if either is missing — still caught by `suggest_fix()`'s outer try/except, just with a more diagnosable failure mode. Fixed in code review before first live use. |
 
 ---
 
@@ -506,6 +511,11 @@ python -m secuirty.verification       # test domain-ownership verification (star
 
 # run the full graph:
 python -m agent.graph
+
+# run the unit tests (needs only requirements-dev.txt -- no browser, no
+# Node, no API key). See §16.
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
 Active-tooling prerequisites (Docker, Nuclei, sqlmap, Dalfox, Nmap, k6,
@@ -520,10 +530,14 @@ consistently on blank input.
 
 ## 10. Immediate next steps (roughly in priority order)
 
-1. **Confirm the `triage/engine.py` composite-key fix actually holds** —
-   run a real multi-page site through `triage_node` now that the
-   `.format()` KeyError blocking it is fixed. This has still never
-   successfully completed end-to-end.
+1. ~~**Confirm the `triage/engine.py` composite-key fix actually holds**~~ —
+   **DONE, via unit test.** `tests/test_triage.py::
+   test_aggregate_for_llm_keeps_same_audit_id_on_different_pages_distinct`
+   feeds `aggregate_for_llm()` two pages that both report `heading-order`
+   and asserts two distinct `url::audit_id` entries come back. No API key,
+   no tokens, runs in CI on every push. A live multi-page run through
+   `triage_node` is still worth doing for the LLM half, but the collision
+   bug itself is now covered by a regression test.
 2. **Run `fix_node` live for the first time** — implemented and code-reviewed
    this session (legacy tool name + unsafe indexing both fixed
    proactively), but not yet actually executed against real
@@ -541,8 +555,8 @@ consistently on blank input.
    hydration-wait fix solves late-rendering SPAs, but not
    `onClick`/`history.pushState()`-only routing with zero real `<a href>`
    tags anywhere.
-7. **Clean up `audit/lighthouse.py`**: delete the shadowed first
-   `run_lighthouse()` definition.
+7. ~~**Clean up `audit/lighthouse.py`**: delete the shadowed first
+   `run_lighthouse()` definition.~~ **DONE.**
 8. **Clean up now-dead imports in `graph.py`** left over from
    `security_audit_node`'s logic moving to `secuirty/passive_checks.py`.
 9. **Migrate `run_passive_tests`/`security_audit_node` to multi-page** —
@@ -558,8 +572,9 @@ consistently on blank input.
     reviews `fix_node`'s report.
 12. Consider tightening `UXSuggestion.category` to a `UXCategory` enum.
     Still proposed, not applied.
-13. Consider giving `Category` a `UX` value instead of the current
-    `Category.ACCESSIBILITY` placeholder used for promoted UX issues.
+13. ~~Consider giving `Category` a `UX` value instead of the current
+    `Category.ACCESSIBILITY` placeholder used for promoted UX issues.~~
+    **DONE** — `Category.UX` exists and `triage/engine.py` uses it.
 14. Reuse `verification._domain_from_url()`'s normalization inside
     `active_engine.py` instead of its current bare `urlparse(url).hostname`.
 15. **Audit every existing node for the "mutate state in place instead of
@@ -597,7 +612,7 @@ consistently on blank input.
   is an agreed design direction, don't relitigate it from scratch.
 - Pattern worth knowing: user often pastes their own already-written code
   for review rather than asking for it to be written from scratch (true of
-  `fix/engine.py`, `active_engine.py`, the updated `TRIAGE_PROMPT`) — the
+  `fix/suggest.py`, `active_engine.py`, the updated `TRIAGE_PROMPT`) — the
   useful mode in that case is a careful bug-hunt/design review, not a
   rewrite from zero.
 
@@ -717,8 +732,8 @@ design.
    `Severity.HIGH` suggestions (user's explicit choice) get promoted into
    synthetic pseudo-`Issue`s with `fix_confidence=0.1`. Everything below
    stays a plain `UXSuggestion`, report-only, never enters the fix
-   pipeline. `Category.ACCESSIBILITY` used as an inaccurate placeholder
-   category — unresolved.
+   pipeline. Promoted issues are stamped `Category.UX` (this used to be an
+   inaccurate `Category.ACCESSIBILITY` placeholder — now resolved).
 
 ### Two real bugs found this module, one confirmed fixed, one status still open
 
@@ -760,7 +775,7 @@ the detailed per-item context.)
 
 ---
 
-## 15. Fix module (`fix/engine.py`) — PROPOSE-only fix suggestions
+## 15. Fix module (`fix/suggest.py`) — PROPOSE-only fix suggestions
 
 ### Purpose and scope, confirmed explicitly with the user this session
 
@@ -854,3 +869,58 @@ solution_sources: list[str] = Field(default_factory=list)
 Both added to `Issue`. Without these, `suggest_fix()` would crash the
 first time it tried `issue.suggested_solution = solution`, since Pydantic
 models reject assignment to undeclared fields.
+
+---
+
+## 16. Tests and CI (`tests/`, `.github/workflows/ci.yml`)
+
+Added during the DevOps pass. 61 tests, all covering **pure functions
+only** — no network, browser, Node, LLM call or API key. `pytest -q` from
+`site-doctor/` runs in about two seconds.
+
+### What is covered
+
+| Module | What is tested |
+|---|---|
+| `crawler/utils.py` | `normalize_url`, `is_internal_link`, `slugify`, `extract_links` |
+| `audit/lighthouse.py` | `parse_report()` against a hand-written fake report dict |
+| `models/schemas.py` | required fields, enum rejection, defaults, mutable-default isolation |
+| `crawler/storage.py` | cache layout, `save_manifest`/`load_manifest` round trip |
+| `triage/engine.py` | prompt formatting, `aggregate_for_llm`, security + UX triage |
+
+### What is NOT covered — do not assume green tests mean safe
+
+`agent/graph.py` (every node), `crawler/website_crawler.py`'s BFS,
+`secuirty/*`, `fix/suggest.py`, `ux_review/*`, `report/*`, and
+`run_lighthouse()` itself. All of those need a browser, a subprocess, an
+API key, or a human at a keyboard.
+
+### Regression tests worth knowing about
+
+Several tests exist specifically to stop a previously-fixed bug from §7
+coming back. Each was verified to actually fail when the bug is
+reintroduced, so none of them are vacuous:
+
+- the spoofable `startswith()` hostname check in `is_internal_link`
+- `TRIAGE_PROMPT.format()`'s `KeyError` from unescaped literal JSON braces
+- `default_factory` being given a *called* `datetime.utcnow()`
+- `save_manifest()` on a zero-page crawl
+- `aggregate_for_llm`'s per-page issue-ID collision (see §10 item 1)
+
+**If you change behaviour deliberately, a red test is the expected
+outcome — update the test, don't work around it.** Two tests document
+current behaviour rather than desired behaviour and say so in their
+docstrings: `test_normalize_url_requires_a_scheme` (it raises `IndexError`
+on scheme-less input) and
+`test_is_internal_link_treats_a_different_port_as_external`.
+
+### CI
+
+`.github/workflows/ci.yml` runs the suite on Ubuntu + Python 3.14, on
+pushes to `devops/**` and on PRs into `main`. It installs
+`requirements-dev.txt` only (5 packages), not the full runtime set.
+
+`OPENAI_API_KEY` is set to a **literal dummy string, not a GitHub
+Secret** — no real key ever enters CI. It exists only because
+`fix/suggest.py:36` constructs an `OpenAI` client at module import time,
+so importing `agent.graph` at all requires *some* value to be present.
