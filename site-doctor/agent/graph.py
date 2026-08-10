@@ -34,41 +34,39 @@ from triage.engine import (
 )
 from fix.suggest import suggest_fix
 from report.generate_pdf import generate_report_pdf
-from secuirty.active_engine import run_active_security_tests
+
+# NOTE: secuirty/active_engine.py (ZAP active scan, SQLMap, Dalfox, Nmap,
+# k6 load/stress) is intentionally NOT imported or wired into this graph.
+# Per CLAUDE.md, active/attacking security tooling is a deliberately
+# separate architectural mode gated behind real DNS-TXT domain-ownership
+# verification plus a fresh per-run confirmation -- it must never be part
+# of the default "audit any URL" flow, and doubly so now that this graph
+# is reachable over the network via the FastAPI surface rather than a
+# local CLI a human has to sit at.
 
 # ---- Nodes ----
 
 def check_selection_node(state: SiteDoctorState) -> dict:
-    print("\nWhich checks do you want to run?")
-    print("  [1] SEO       (Lighthouse: SEO / accessibility / performance)")
-    print("  [2] UX        (vision-based usability review)")
-    print("  [3] Security  (passive checks only -- OFF by default)")
-    raw = input("Enter numbers separated by commas (default: 1,2): ").strip()
+    """API-safe validation/normalization of the checks the caller asked
+    for -- no interactive input(). Mirrors the old CLI's behavior:
+    unknown check names are dropped, an empty selection falls back to
+    seo+ux, and 'security' is silently dropped unless the caller
+    explicitly confirmed (state.security_confirmed), matching the old
+    y/N prompt. 'security' here only ever means the PASSIVE checks in
+    secuirty/passive_checks.py -- see the module note above."""
+    valid = {"seo", "ux", "security"}
+    selected = [c for c in dict.fromkeys(state.selected_checks) if c in valid]
 
-    selected_numbers = {n.strip() for n in raw.split(",") if n.strip()} if raw else {"1", "2"}
-    mapping = {"1": "seo", "2": "ux", "3": "security"}
-    selected = [mapping[n] for n in selected_numbers if n in mapping]
-
-    max_d = int(input("Enter the max depth : ").strip() or 2)
-    max_p = int(input("Enter the max pages : ").strip() or 10)
-
-    if "security" in selected:
-        confirm = input(
-            "\nYou selected Security. This runs PASSIVE checks only "
-            "(HTTP security headers, TLS certificate validity) -- no "
-            "active scanning, exploitation, or load testing is performed. "
-            "Confirm you are authorized to test this target [y/N]: "
-        ).strip().lower()
-        if confirm != "y":
-            print("Not confirmed -- removing Security from this run.")
-            selected.remove("security")
+    if "security" in selected and not state.security_confirmed:
+        print("Security selected but not confirmed -- removing it from this run.")
+        selected = [c for c in selected if c != "security"]
 
     if not selected:
         print("No valid checks selected -- defaulting to SEO + UX.")
         selected = ["seo", "ux"]
 
     print(f"Running: {', '.join(selected)}\n")
-    return {"selected_checks": selected, "max_depth": max_d, "max_pages": max_p}
+    return {"selected_checks": selected}
 
 
 def crawl_node(state: SiteDoctorState) -> dict:
@@ -144,10 +142,11 @@ def security_audit_node(state: SiteDoctorState) -> dict:
     """Passive security posture checks ONLY: HTTP security headers and TLS
     certificate validity. No active scanning, no exploitation attempts, no
     load/stress testing under any configuration (SRS FR-15, FR-16). Only
-    reachable when explicitly selected via check_selection_node."""
+    reachable when explicitly selected + confirmed via check_selection_node.
+    Active/attacking tooling (secuirty/active_engine.py) is a separate,
+    verification-gated capability and is deliberately not called here."""
     print("Security Audit Node Entered")
     findings = run_passive_tests(state.url)
-    findings.append(run_active_security_tests(state.url))
     print(f"Security findings: {findings}")
     return {"security_findings": findings}
 
@@ -183,8 +182,7 @@ def report_node(state: SiteDoctorState) -> dict:
     decide whether to let the agent proceed into the (still-unbuilt)
     apply/verify/retry loop."""
     print("Report Node Entered")
-    want_report=input("Generate PDF report? [Y/n]: ").strip().lower() or "y"
-    if want_report != "y":
+    if not state.generate_report:
         print("Skipping report generation.")
         return {"report_path": None}
     else:
@@ -259,5 +257,39 @@ def build_graph():
 if __name__ == "__main__":
     app = build_graph()
     target = input("Enter the URL to review: ").strip()
-    final_state = app.invoke(SiteDoctorState(url=target))
+
+    print("\nWhich checks do you want to run?")
+    print("  [1] SEO       (Lighthouse: SEO / accessibility / performance)")
+    print("  [2] UX        (vision-based usability review)")
+    print("  [3] Security  (passive checks only -- OFF by default)")
+    raw = input("Enter numbers separated by commas (default: 1,2): ").strip()
+    numbers = {n.strip() for n in raw.split(",") if n.strip()} if raw else {"1", "2"}
+    mapping = {"1": "seo", "2": "ux", "3": "security"}
+    checks = [mapping[n] for n in numbers if n in mapping]
+
+    max_d = int(input("Enter the max depth : ").strip() or 2)
+    max_p = int(input("Enter the max pages : ").strip() or 10)
+
+    security_confirmed = False
+    if "security" in checks:
+        confirm = input(
+            "\nYou selected Security. This runs PASSIVE checks only "
+            "(HTTP security headers, TLS certificate validity) -- no "
+            "active scanning, exploitation, or load testing is performed. "
+            "Confirm you are authorized to test this target [y/N]: "
+        ).strip().lower()
+        security_confirmed = confirm == "y"
+
+    want_report = (input("Generate PDF report? [Y/n]: ").strip().lower() or "y") == "y"
+
+    final_state = app.invoke(
+        SiteDoctorState(
+            url=target,
+            selected_checks=checks,
+            max_depth=max_d,
+            max_pages=max_p,
+            security_confirmed=security_confirmed,
+            generate_report=want_report,
+        )
+    )
     print(final_state)

@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Site Doctor — design tokens
+
+   The page is printed on chart stock: a pale, slightly green paper with the
+   faint salmon grid you get on a real diagnostic strip. Everything is ink on
+   that paper. The only saturated colors in the entire system are the three
+   triage tags, and they are never used decoratively — if something is red on
+   this site, it is because a severity was assigned to it.
+--------------------------------------------------------------------------- */
+
+@layer base {
+  :root {
+    --paper: 100 10% 94%;
+    --paper-raised: 90 20% 98%;
+    --paper-sunk: 105 9% 91%;
+
+    /* Card stocks.
+       Real chart paper doesn't come in one tint — different batches and
+       weights sit slightly apart from each other. These five are the same
+       pale green-grey pulled across a 2% lightness band and a narrow arc of
+       hue, so a grid of cards reads as varied without any one of them
+       stepping forward or turning into a colour in its own right. Anything
+       wider than this stops being paper and starts being decoration. */
+    --stock-1: 90 20% 98%;
+    --stock-2: 120 16% 96.8%;
+    --stock-3: 155 14% 96%;
+    --stock-4: 72 18% 97.2%;
+    --stock-5: 175 12% 96.4%;
+
+    --ink: 160 16% 7.5%;
+    --ink-2: 150 8% 30%;
+    --ink-3: 155 6% 41%;
+
+    --rule: 129 9% 85%;
+
+    /* Triage tags — solid fills, paper text. */
+    --critical: 3 62% 48%;
+    --caution: 38 97% 37%;
+    --minor: 153 47% 33%;
+
+    /* Darkened variants, for when a triage color has to be *text* on paper
+       and still clear WCAG AA. */
+    --critical-ink: 3 76% 40%;
+    --caution-ink: 38 98% 28%;
+    --minor-ink: 155 50% 24%;
+
+    /* Chart grid, derived from the critical hue — this is what makes the
+       stock read as diagnostic paper rather than generic graph paper. */
+    --grid-fine: 3 62% 48% / 0.07;
+    --grid-major: 3 62% 48% / 0.13;
+
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-rule;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-paper font-body text-ink-2 antialiased;
+    font-size: 1rem;
+    line-height: 1.65;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* The chart stock itself. Fixed, so the page slides over the grid rather
+     than dragging it along — the way paper feeds through a machine. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, hsl(var(--grid-major)) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-major)) 1px, transparent 1px),
+      linear-gradient(to right, hsl(var(--grid-fine)) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-fine)) 1px, transparent 1px);
+    background-size:
+      80px 80px,
+      80px 80px,
+      16px 16px,
+      16px 16px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display text-ink;
+    font-weight: 700;
+  }
+
+  ::selection {
+    background: hsl(var(--ink));
+    color: hsl(var(--paper-raised));
+  }
+
+  /* Focus is always visible and always the same shape. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ink));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@layer components {
+  /* Instrument label: the small mono caps used for eyebrows, field labels,
+     channel names and readout keys. */
+  .label-mono {
+    @apply font-mono text-label font-medium uppercase text-ink-3;
+  }
+
+  /* A raised card on the chart stock. Deliberately low-radius and
+     hairline-ruled — these are specimen cards, not glassmorphism. */
+  .card-chart {
+    @apply rounded-lg border border-rule bg-paper-raised shadow-chart;
+  }
+
+  /* Perforated divider, like a tear-off strip on a chart roll. */
+  .rule-perf {
+    background-image: repeating-linear-gradient(
+      to right,
+      hsl(var(--rule)) 0 6px,
+      transparent 6px 12px
+    );
+    height: 1px;
+  }
+}
+
+/* Anyone who has asked their system to calm down gets a calm page: content
+   still arrives, it just arrives without travel. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -118,3 +118,13 @@ class SiteDoctorState(BaseModel):
     max_depth: int = 2
     max_pages: int = 10
     report_path: Optional[str] = None
+    generate_report: bool = True
+    security_confirmed: bool = Field(
+        default=False,
+        description=(
+            "Must be explicitly set true by the caller to include passive "
+            "security checks. Mirrors the CLI's y/N confirmation prompt -- "
+            "this does NOT unlock active/attacking security tooling, which "
+            "stays out of this flow entirely (see secuirty/active_engine.py)."
+        ),
+    )
